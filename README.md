@@ -191,25 +191,6 @@ python -m claude_ops.main investigate --namespace si --service multi-system-proc
 
 Then paste the generated JSON snapshot into Claude/Claude Code and ask it to produce an incident report using the schema in `src/claude_ops/schemas/incident_report_schema.py`.
 
-## Roadmap
-
-Done:
-
-- Evidence references and raw artifact storage to avoid context bloat.
-- Prometheus tools for bounded metric evidence, with a coordinator-owned
-  connectivity preflight (`prom_ensure_connection`).
-- IBM Cloud Logs tools for persistent historical log evidence.
-- Coordinator/subagent investigation workflow (`incident-coordinator` +
-  `k8s-evidence-collector`/`prometheus-analyst`/`log-analyst`/
-  `runbook-analyst`/`incident-reporter`).
-
-Not yet done:
-
-1. Run the current MCP/Kubernetes tools against a live read-only cluster context.
-2. Add durable investigation memory using task, evidence, hypothesis, and decision records.
-3. Add Claude API and Batch API paths for structured reports, evals, and offline analysis.
-4. Add Goose as an operator-facing UI over the same MCP server.
-
 ## MCP client/server map
 
 In this project:

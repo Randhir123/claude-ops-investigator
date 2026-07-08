@@ -1,4 +1,4 @@
-"""MCP server for Claude Ops Support Agent.
+"""MCP server for Claude Ops Investigator.
 
 Run locally over STDIO:
 
@@ -37,7 +37,7 @@ from claude_ops.evidence.raw_store import load_raw_evidence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-mcp = FastMCP("claude-ops-support-agent")
+mcp = FastMCP("claude-ops-investigator")
 
 
 def _json(data: Any) -> str:

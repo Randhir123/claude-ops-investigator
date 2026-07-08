@@ -192,6 +192,31 @@ def prom_get_pod_restart_counts(namespace: str, service: str) -> dict[str, Any]:
     )
 
 
+def prom_get_pod_restart_increase(namespace: str, service: str, since_minutes: int = 60) -> dict[str, Any]:
+    """Get per-pod restart increase for a service over a bounded incident window."""
+    ns = _escape_label_value(namespace)
+    svc = _escape_label_value(service)
+    window = f"{_clamp_since_minutes(since_minutes)}m"
+    promql = (
+        f"sum by (pod) (increase(kube_pod_container_status_restarts_total"
+        f'{{namespace="{ns}", pod=~"{svc}.*"}}[{window}]))'
+    )
+    result = _instant_query(promql)
+    if result.get("isError"):
+        return result
+    return _store_prometheus_evidence(
+        promql=promql,
+        raw=result["data"],
+        label=f"pod restart increase for {namespace}/{service} over last {window}",
+        metadata={
+            "namespace": namespace,
+            "service": service,
+            "metric": "pod_restart_increase",
+            "since_minutes": since_minutes,
+        },
+    )
+
+
 def prom_get_pod_cpu_usage(namespace: str, service: str) -> dict[str, Any]:
     """Get current per-pod CPU usage (5m rate) for a service."""
     ns = _escape_label_value(namespace)

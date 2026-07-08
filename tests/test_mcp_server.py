@@ -24,6 +24,7 @@ def test_mcp_server_lists_all_tools():
         # Prometheus tools
         "prom_query_instant",
         "prom_get_pod_restart_counts",
+        "prom_get_pod_restart_increase",
         "prom_get_pod_cpu_usage",
         "prom_get_pod_memory_usage",
         "prom_get_http_error_rate",

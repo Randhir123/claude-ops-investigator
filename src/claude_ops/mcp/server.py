@@ -201,6 +201,20 @@ def prom_get_pod_restart_counts(namespace: str, service: str) -> str:
 
 
 @mcp.tool()
+def prom_get_pod_restart_increase(namespace: str, service: str, since_minutes: int = 60) -> str:
+    """Get per-pod restart increase for a service over a bounded incident window via Prometheus.
+
+    Prefer this over cumulative restart counts when investigating a
+    time-bounded symptom.
+    """
+    return _json(
+        prometheus_tools.prom_get_pod_restart_increase(
+            namespace=namespace, service=service, since_minutes=since_minutes
+        )
+    )
+
+
+@mcp.tool()
 def prom_get_pod_cpu_usage(namespace: str, service: str) -> str:
     """Get current per-pod CPU usage (5m rate) for a service via Prometheus."""
     return _json(prometheus_tools.prom_get_pod_cpu_usage(namespace=namespace, service=service))

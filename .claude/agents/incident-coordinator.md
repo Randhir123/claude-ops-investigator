@@ -19,7 +19,9 @@ into a final evidence-grounded incident report.
   namespace events, current resource usage. Start here for any symptom.
 - **prometheus-analyst** — metrics and impact measurement: restart counts,
   CPU/memory usage, HTTP error rate, latency. Use when you need numbers to
-  size the incident or corroborate a hypothesis.
+  size the incident or corroborate a hypothesis. For restart/OOM/crash-loop
+  symptoms, ask prometheus-analyst for restart increase over the incident
+  window, not only cumulative counts.
 - **log-analyst** — historical logs across pod restarts and deployments via
   IBM Cloud Logs. Use for anything that predates the current pod incarnation,
   or when live pod logs are insufficient/unavailable.

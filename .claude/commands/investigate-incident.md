@@ -34,16 +34,22 @@ Examples:
    investigate unrelated services in the namespace.
 4. **Choose tools based on the symptom** — do not run every tool by default.
    Map the symptom to the narrowest relevant set:
-   - **OOM / restarts** → `k8s_list_pods`, `k8s_describe_pod` (affected pods),
-     `k8s_get_recent_namespace_events`, `k8s_top_pods`; `prom_get_pod_memory_usage`
-     and `prom_get_pod_restart_counts` to size and corroborate the pattern with
-     metrics; `k8s_get_pod_logs` for the current pod, and
-     `ibm_logs_search_errors` if the incident spans earlier pod incarnations.
+   - **OOM / restarts / crash-loop** → `k8s_list_pods`, `k8s_describe_pod`
+     (affected pods), `k8s_get_recent_namespace_events`, `k8s_top_pods`;
+     `prom_get_pod_memory_usage` and `prom_get_pod_restart_increase(namespace,
+     service, since_minutes)` to size and corroborate the pattern with
+     metrics over the incident window — use `prom_get_pod_restart_counts` only
+     as supporting context for the current cumulative count; `k8s_get_pod_logs`
+     for the current pod, and `ibm_logs_search_errors` if the incident spans
+     earlier pod incarnations.
    - **Readiness / liveness probe failures** → `k8s_get_recent_namespace_events`,
      `k8s_describe_pod` (affected pods), `runbook_search`;
      `ibm_logs_search_probe_failures` for historical probe/app errors across
-     restarts; `prom_get_http_error_rate` and `prom_get_latency_p95` if
-     availability/latency data is available for the service.
+     restarts; `prom_get_pod_restart_increase(namespace, service,
+     since_minutes)` to size restarts over the incident window (cumulative
+     restart counts only as supporting context); `prom_get_http_error_rate`
+     and `prom_get_latency_p95` if availability/latency data is available for
+     the service.
    - **Kafka commit rate low / consumer lag** → `runbook_search` first, then
      `ibm_logs_search` (or `ibm_logs_search_text` with the specific error
      string) for historical evidence, plus `k8s_list_pods` and
@@ -63,11 +69,14 @@ Examples:
    `k8s_get_pod_logs` for "what is this specific running pod doing right now"
    checks.
 6. **Prefer typed Prometheus tools over free-form `prom_query_instant`.** Use
-   `prom_get_pod_restart_counts` / `prom_get_pod_cpu_usage` /
-   `prom_get_pod_memory_usage` / `prom_get_http_error_rate` /
-   `prom_get_latency_p95` for anything they cover. Only reach for
-   `prom_query_instant` when none of them answer the question, and keep the
-   query narrow.
+   `prom_get_pod_restart_increase` / `prom_get_pod_restart_counts` /
+   `prom_get_pod_cpu_usage` / `prom_get_pod_memory_usage` /
+   `prom_get_http_error_rate` / `prom_get_latency_p95` for anything they
+   cover. Only reach for `prom_query_instant` when none of them answer the
+   question, and keep the query narrow. For OOM/restart/crash-loop/liveness
+   symptoms, prefer `prom_get_pod_restart_increase(namespace, service,
+   since_minutes)` over the incident window; use `prom_get_pod_restart_counts`
+   only as supporting context for the current cumulative count.
 7. **Do not call `prom_ensure_connection` automatically.** If a `prom_get_*`
    or `prom_query_instant` call reports Prometheus as unreachable, note that
    as an `unknowns` gap and *suggest* running `prom_ensure_connection` in the

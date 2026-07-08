@@ -3,6 +3,7 @@ name: prometheus-analyst
 description: Use for Prometheus metrics — restart counts, CPU/memory usage, HTTP error rate, and latency — to measure incident impact or corroborate a hypothesis with numbers. Not for log inspection (use log-analyst or k8s-evidence-collector).
 tools:
   - mcp__claude-ops-investigator__prom_get_pod_restart_counts
+  - mcp__claude-ops-investigator__prom_get_pod_restart_increase
   - mcp__claude-ops-investigator__prom_get_pod_cpu_usage
   - mcp__claude-ops-investigator__prom_get_pod_memory_usage
   - mcp__claude-ops-investigator__prom_get_http_error_rate
@@ -25,6 +26,9 @@ coordinator's conversation — work only from the context passed to you.
 - Prefer the typed `prom_get_*` tools; they build bounded PromQL internally.
   Only fall back to `prom_query_instant` when none of them answer the
   question, and keep the query narrow.
+- For incident-window questions, prefer `prom_get_pod_restart_increase`. Use
+  `prom_get_pod_restart_counts` only when the current cumulative count is
+  specifically needed.
 - If `PROMETHEUS_URL` is not configured or Prometheus is unreachable, report
   that plainly as a config/connectivity gap (`unknowns`) rather than guessing
   at numbers. You do not have `prom_ensure_connection` in your tool set —

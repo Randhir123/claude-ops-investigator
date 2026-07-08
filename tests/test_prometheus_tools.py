@@ -107,6 +107,63 @@ def test_prom_get_pod_restart_counts_builds_bounded_promql_and_escapes_labels(mo
     assert result["data"]["metadata"]["metric"] == "pod_restart_counts"
 
 
+def test_prom_get_pod_restart_increase_builds_bounded_increase_query(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+    _redirect_store_to_tmp(monkeypatch, tmp_path)
+
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["params"] = kwargs.get("params")
+        return FakeResponse(200, json_data={"status": "success", "data": {"result": []}})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_get_pod_restart_increase("si", "event-data", since_minutes=60)
+
+    promql = captured["params"]["query"]
+    assert "increase(kube_pod_container_status_restarts_total" in promql
+    assert 'namespace="si"' in promql
+    assert 'pod=~"event-data.*"' in promql
+    assert "[60m]" in promql
+    assert result["isError"] is False
+    assert result["data"]["metadata"]["metric"] == "pod_restart_increase"
+    assert result["data"]["metadata"]["since_minutes"] == 60
+
+
+def test_prom_get_pod_restart_increase_clamps_since_minutes(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+    _redirect_store_to_tmp(monkeypatch, tmp_path)
+
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["params"] = kwargs.get("params")
+        return FakeResponse(200, json_data={"status": "success", "data": {"result": []}})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    prometheus_tools.prom_get_pod_restart_increase("si", "event-data", since_minutes=999999)
+
+    assert f"[{prometheus_tools._MAX_SINCE_MINUTES}m]" in captured["params"]["query"]
+
+
+def test_prom_get_pod_restart_increase_missing_config_returns_structured_error(monkeypatch):
+    monkeypatch.delenv("PROMETHEUS_URL", raising=False)
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError("should not make a network call without PROMETHEUS_URL")
+
+    monkeypatch.setattr(httpx, "request", unexpected_request)
+
+    result = prometheus_tools.prom_get_pod_restart_increase("si", "event-data")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert result["isRetryable"] is False
+    assert "PROMETHEUS_URL" in result["message"]
+
+
 def test_prom_get_http_error_rate_clamps_since_minutes(monkeypatch, tmp_path):
     monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
     _redirect_store_to_tmp(monkeypatch, tmp_path)

@@ -43,9 +43,10 @@ def test_store_k8s_tool_result_preserves_errors():
 
 def test_store_k8s_tool_result_returns_evidence_record(monkeypatch, tmp_path):
     from claude_ops.evidence import k8s_evidence
+    from claude_ops.evidence.raw_store import store_raw_evidence as real_store_raw_evidence
 
     def fake_store_raw_evidence(*, content_type, raw, summary, metadata):
-        return k8s_evidence.store_raw_evidence(
+        return real_store_raw_evidence(
             content_type=content_type,
             raw=raw,
             summary=summary,
@@ -55,7 +56,7 @@ def test_store_k8s_tool_result_returns_evidence_record(monkeypatch, tmp_path):
 
     monkeypatch.setattr(k8s_evidence, "store_raw_evidence", fake_store_raw_evidence)
 
-    result = store_k8s_tool_result(
+    result = k8s_evidence.store_k8s_tool_result(
         content_type="k8s.namespace_events",
         result={"isError": False, "data": "line1\nline2"},
         label="recent events",

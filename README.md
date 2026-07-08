@@ -91,14 +91,24 @@ Examples:
 
 What it does:
 
-1. Reads the service catalog and runbook catalog
-2. Lists target pods
-3. Checks namespace events
-4. Uses describe/log/top tools as needed
-5. Uses Prometheus tools for metrics when configured
-6. Uses IBM Cloud Logs tools for historical logs when configured
-7. Stores raw evidence as `evidence_ref`s
-8. Produces an evidence-grounded incident report
+1. Delegates to the `incident-coordinator` subagent (falls back to a single
+   agent, with that fallback stated explicitly, only if subagents aren't
+   available)
+2. The coordinator reads the service catalog and runbook catalog, then routes
+   the symptom to the narrowest relevant specialist subagents:
+   - `k8s-evidence-collector` — pod listing, describe, live logs, namespace
+     events, current resource usage
+   - `prometheus-analyst` — restart counts/increase, CPU, memory, HTTP error
+     rate, latency p95
+   - `log-analyst` — historical IBM Cloud Logs search (errors, probe
+     failures, arbitrary text) spanning restarts/deployments
+   - `runbook-analyst` — matches the symptom against local runbooks
+3. Every specialist stores raw evidence as an `evidence_ref` and hands back
+   only summaries/findings — the coordinator never gathers evidence directly
+4. `incident-reporter` runs last, synthesizing all subagents' findings (never
+   its own) into a single evidence-grounded, schema-valid report
+5. The final output includes a "Subagent usage audit" table: which subagent
+   ran, what it did, which tools/evidence_refs it used, and its result
 
 What it does not do:
 
@@ -183,13 +193,22 @@ Then paste the generated JSON snapshot into Claude/Claude Code and ask it to pro
 
 ## Roadmap
 
+Done:
+
+- Evidence references and raw artifact storage to avoid context bloat.
+- Prometheus tools for bounded metric evidence, with a coordinator-owned
+  connectivity preflight (`prom_ensure_connection`).
+- IBM Cloud Logs tools for persistent historical log evidence.
+- Coordinator/subagent investigation workflow (`incident-coordinator` +
+  `k8s-evidence-collector`/`prometheus-analyst`/`log-analyst`/
+  `runbook-analyst`/`incident-reporter`).
+
+Not yet done:
+
 1. Run the current MCP/Kubernetes tools against a live read-only cluster context.
-2. Add evidence references and raw artifact storage to avoid context bloat.
-3. Add durable investigation memory using task, evidence, hypothesis, and decision records.
-4. Add Prometheus tools for bounded metric evidence.
-5. Add log-search tools for persistent historical log evidence.
-6. Add Claude API and Batch API paths for structured reports, evals, and offline analysis.
-7. Add Goose as an operator-facing UI over the same MCP server.
+2. Add durable investigation memory using task, evidence, hypothesis, and decision records.
+3. Add Claude API and Batch API paths for structured reports, evals, and offline analysis.
+4. Add Goose as an operator-facing UI over the same MCP server.
 
 ## MCP client/server map
 
@@ -229,6 +248,19 @@ Tools:
 - `k8s_get_recent_namespace_events`
 - `k8s_top_pods`
 - `runbook_search`
+- `prom_query_instant`
+- `prom_get_pod_restart_counts`
+- `prom_get_pod_restart_increase`
+- `prom_get_pod_cpu_usage`
+- `prom_get_pod_memory_usage`
+- `prom_get_http_error_rate`
+- `prom_get_latency_p95`
+- `prom_ensure_connection`
+- `ibm_logs_search`
+- `ibm_logs_search_errors`
+- `ibm_logs_search_probe_failures`
+- `ibm_logs_search_text`
+- `evidence_get_detail`
 
 Prompt:
 - `investigate_incident`

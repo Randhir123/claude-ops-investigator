@@ -29,3 +29,11 @@ evals/runs/
 .DS_Store
 .idea/
 .vscode/
+
+# Runtime outputs - keep only .gitkeep
+runs/*
+!runs/.gitkeep
+reports/*
+!reports/.gitkeep
+artifacts/*
+!artifacts/.gitkeep

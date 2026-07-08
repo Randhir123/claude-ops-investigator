@@ -43,7 +43,7 @@ Blocked operations include:
 ## Quick start
 
 ```bash
-cd claude-ops-support-agent
+cd claude-ops-investigator
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -79,13 +79,15 @@ python -m claude_ops.main investigate --namespace si --service multi-system-proc
 
 Then paste the generated JSON snapshot into Claude/Claude Code and ask it to produce an incident report using the schema in `src/claude_ops/schemas/incident_report_schema.py`.
 
-## Next steps
+## Roadmap
 
-1. Add an Anthropic API/Agent SDK coordinator.
-2. Expose the tools as MCP tools.
-3. Add real subagents: logs analyst, events analyst, metrics analyst, runbook analyst, synthesis.
-4. Add structured validation/retry around the final incident report.
-5. Add a gated remediation tool only after read-only investigation works.
+1. Run the current MCP/Kubernetes tools against a live read-only cluster context.
+2. Add evidence references and raw artifact storage to avoid context bloat.
+3. Add durable investigation memory using task, evidence, hypothesis, and decision records.
+4. Add Prometheus tools for bounded metric evidence.
+5. Add log-search tools for persistent historical log evidence.
+6. Add Claude API and Batch API paths for structured reports, evals, and offline analysis.
+7. Add Goose as an operator-facing UI over the same MCP server.
 
 ## MCP client/server map
 

@@ -32,6 +32,8 @@ from claude_ops.tools.k8s_tools import (
     top_pods,
 )
 from claude_ops.tools.runbook_tools import get_runbook_catalog, search_runbooks
+from claude_ops.evidence.k8s_evidence import store_k8s_tool_result
+from claude_ops.evidence.raw_store import load_raw_evidence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -78,7 +80,15 @@ def k8s_describe_pod(namespace: str, pod_name: str) -> str:
     Use this to inspect restart reasons, last state, probe configuration,
     container statuses, events, and scheduling details.
     """
-    return _json(describe_pod(namespace=namespace, pod_name=pod_name))
+    result = describe_pod(namespace=namespace, pod_name=pod_name)
+    return _json(
+        store_k8s_tool_result(
+            content_type="k8s.pod_describe",
+            result=result,
+            label=f"describe pod {namespace}/{pod_name}",
+            metadata={"namespace": namespace, "pod_name": pod_name},
+        )
+    )
 
 
 @mcp.tool()
@@ -94,13 +104,25 @@ def k8s_get_pod_logs(
     Read-only. Use this to inspect recent application errors around an incident.
     Keep since_minutes and tail bounded to avoid excessive context.
     """
+    result = get_pod_logs(
+        namespace=namespace,
+        pod_name=pod_name,
+        container=container,
+        since_minutes=since_minutes,
+        tail=tail,
+    )
     return _json(
-        get_pod_logs(
-            namespace=namespace,
-            pod_name=pod_name,
-            container=container,
-            since_minutes=since_minutes,
-            tail=tail,
+        store_k8s_tool_result(
+            content_type="k8s.pod_logs",
+            result=result,
+            label=f"logs for pod {namespace}/{pod_name}",
+            metadata={
+                "namespace": namespace,
+                "pod_name": pod_name,
+                "container": container,
+                "since_minutes": since_minutes,
+                "tail": tail,
+            },
         )
     )
 
@@ -112,7 +134,15 @@ def k8s_get_recent_namespace_events(namespace: str) -> str:
     Use this to inspect liveness failures, scheduling issues, image pull errors,
     OOMKilled events, and Kubernetes warnings.
     """
-    return _json(get_recent_namespace_events(namespace=namespace))
+    result = get_recent_namespace_events(namespace=namespace)
+    return _json(
+        store_k8s_tool_result(
+            content_type="k8s.namespace_events",
+            result=result,
+            label=f"recent events in namespace {namespace}",
+            metadata={"namespace": namespace},
+        )
+    )
 
 
 @mcp.tool()
@@ -134,6 +164,30 @@ def runbook_search(query: str) -> str:
     probe failure.
     """
     return _json(search_runbooks(query=query))
+
+
+@mcp.tool()
+def evidence_get_detail(evidence_ref: str) -> str:
+    """Fetch raw evidence detail by evidence_ref.
+
+    Use this only when the compact summary is insufficient. Prefer reasoning over
+    summaries first to avoid unnecessary context growth.
+    """
+    try:
+        return _json({
+            "isError": False,
+            "data": load_raw_evidence(evidence_ref),
+        })
+    except FileNotFoundError as exc:
+        return _json({
+            "isError": True,
+            "errorCategory": "validation",
+            "isRetryable": False,
+            "message": str(exc),
+            "attempted": {"evidence_ref": evidence_ref},
+            "partialResults": None,
+            "alternatives": ["Use a valid evidence_ref returned by a previous tool call"],
+        })
 
 
 @mcp.prompt()

@@ -69,6 +69,87 @@ Run tests:
 pytest
 ```
 
+## Claude Code slash command
+
+The main interactive workflow is the `/investigate-incident` slash command:
+
+```
+/investigate-incident namespace=<namespace> service=<service> symptom="<specific symptom>" since_minutes=<minutes>
+```
+
+`symptom` is required — this workflow is symptom-driven, not a generic
+service health check. If no symptom is given, Claude asks for one before
+investigating anything.
+
+Examples:
+
+```
+/investigate-incident namespace=si service=multi-system-processor symptom="readiness probe failures during recent rollout" since_minutes=60
+/investigate-incident namespace=si service=event-data symptom="KafkaConsumerCommitRateLow alert fired" since_minutes=120
+/investigate-incident namespace=si service=multi-system-processor symptom="OOMKilled restarts observed" since_minutes=180
+```
+
+What it does:
+
+1. Reads the service catalog and runbook catalog
+2. Lists target pods
+3. Checks namespace events
+4. Uses describe/log/top tools as needed
+5. Uses Prometheus tools for metrics when configured
+6. Uses IBM Cloud Logs tools for historical logs when configured
+7. Stores raw evidence as `evidence_ref`s
+8. Produces an evidence-grounded incident report
+
+What it does not do:
+
+- Does not mutate Kubernetes resources
+- Does not restart pods
+- Does not apply fixes
+- Does not run destructive commands
+- Does not fetch raw evidence detail unless needed
+
+### Environment for optional tools
+
+Prometheus:
+- `PROMETHEUS_URL`
+- `PROMETHEUS_AUTO_PORT_FORWARD`
+- `PROMETHEUS_PF_SERVICE`
+- `PROMETHEUS_PF_NAMESPACE`
+
+IBM Cloud Logs:
+- `IBM_LOGS_ENDPOINT`
+- `IBM_CLOUD_API_KEY`
+
+Copy `.env.example` to `.env` and fill in local values. Never commit `.env`.
+The MCP server loads it automatically at startup so these tools have access
+without any secrets going into `.mcp.json`.
+
+### No-token local tests
+
+These exercise the tools and structured error paths without any real
+Prometheus, IBM Cloud, or Kubernetes credentials:
+
+```bash
+python -m pytest
+python scripts/mcp_smoke_client.py
+```
+
+Direct tool checks:
+
+```bash
+python - <<'PY'
+from claude_ops.tools.prometheus_preflight import ensure_prometheus
+import json
+print(json.dumps(ensure_prometheus(), indent=2))
+PY
+
+python - <<'PY'
+from claude_ops.tools.ibm_logs_tools import ibm_logs_search_errors
+import json
+print(json.dumps(ibm_logs_search_errors("si", "multi-system-processor", limit=1), indent=2))
+PY
+```
+
 ## Local environment
 
 The MCP server needs environment variables for the optional Prometheus and

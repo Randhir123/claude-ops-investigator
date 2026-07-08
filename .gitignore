@@ -1,7 +1,31 @@
+# Python
 .venv/
 __pycache__/
-.pytest_cache/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Secrets / local config
 .env
-kubeconfig*
-*.log
+.env.*
+!.env.example
+
+# Runtime outputs
+runs/
+reports/
+artifacts/
+raw/
+trajectories/
+evals/results/
+evals/runs/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

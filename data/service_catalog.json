@@ -1,0 +1,28 @@
+{
+  "services": [
+    {
+      "name": "event-data",
+      "namespace": "si",
+      "labels": {
+        "app": "event-data"
+      },
+      "risk": "production"
+    },
+    {
+      "name": "time-series-query",
+      "namespace": "si",
+      "labels": {
+        "app": "time-series-query"
+      },
+      "risk": "production"
+    },
+    {
+      "name": "multi-system-processor",
+      "namespace": "si",
+      "labels": {
+        "app": "multi-system-processor"
+      },
+      "risk": "production"
+    }
+  ]
+}

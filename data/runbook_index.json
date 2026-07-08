@@ -1,0 +1,19 @@
+{
+  "runbooks": [
+    {
+      "id": "oom-restart",
+      "title": "OOM Restart Investigation",
+      "path": "data/runbooks/oom-restart.md"
+    },
+    {
+      "id": "kafka-commit-rate-low",
+      "title": "Kafka Consumer Commit Rate Low",
+      "path": "data/runbooks/kafka-commit-rate-low.md"
+    },
+    {
+      "id": "liveness-probe-failure",
+      "title": "Liveness Probe Failure",
+      "path": "data/runbooks/liveness-probe-failure.md"
+    }
+  ]
+}

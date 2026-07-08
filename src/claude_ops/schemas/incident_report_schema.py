@@ -1,0 +1,42 @@
+INCIDENT_REPORT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "service",
+        "namespace",
+        "severity",
+        "symptoms",
+        "evidence",
+        "likely_causes",
+        "ruled_out",
+        "recommended_next_steps",
+        "requires_human",
+        "confidence",
+        "unknowns",
+    ],
+    "properties": {
+        "service": {"type": "string"},
+        "namespace": {"type": "string"},
+        "severity": {"type": "string", "enum": ["low", "medium", "high", "critical", "unclear"]},
+        "symptoms": {"type": "array", "items": {"type": "string"}},
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source", "detail"],
+                "properties": {
+                    "source": {"type": "string"},
+                    "detail": {"type": "string"},
+                    "timestamp": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "likely_causes": {"type": "array", "items": {"type": "string"}},
+        "ruled_out": {"type": "array", "items": {"type": "string"}},
+        "recommended_next_steps": {"type": "array", "items": {"type": "string"}},
+        "requires_human": {"type": "boolean"},
+        "confidence": {"type": "string", "enum": ["low", "medium", "high", "unclear"]},
+        "unknowns": {"type": "array", "items": {"type": "string"}},
+    },
+}

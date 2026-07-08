@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: claude-ops-support-agent
+Version: 0.1.0
+Summary: A context-aware Kubernetes incident investigation assistant built with Claude Code, MCP, live cluster signals, and evidence memory
+Requires-Python: >=3.10
+Requires-Dist: jsonschema>=4.23.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Provides-Extra: mcp
+Requires-Dist: mcp>=1.0.0; extra == "mcp"

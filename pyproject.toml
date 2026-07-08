@@ -1,0 +1,21 @@
+[project]
+name = "claude-ops-support-agent"
+version = "0.1.0"
+description = "A context-aware Kubernetes incident investigation assistant built with Claude Code, MCP, live cluster signals, and evidence memory"
+requires-python = ">=3.10"
+dependencies = [
+  "jsonschema>=4.23.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0"
+]
+
+mcp = [
+  "mcp>=1.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

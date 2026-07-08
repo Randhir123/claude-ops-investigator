@@ -4,6 +4,7 @@ description: Top-level coordinator for a Kubernetes incident investigation. Deco
 tools:
   - Agent
   - Read
+  - mcp__claude-ops-investigator__prom_ensure_connection
 ---
 
 # Incident Coordinator
@@ -45,3 +46,17 @@ into a final evidence-grounded incident report.
 - If subagents disagree or evidence is inconsistent, say so explicitly rather
   than picking one account — let incident-reporter capture it under
   `unknowns`.
+
+## Prometheus connectivity
+
+- If prometheus-analyst reports Prometheus unreachable, do not treat metrics
+  as zero.
+- The coordinator may call `prom_ensure_connection` only when the user
+  explicitly asked for Prometheus-backed investigation or when metrics are
+  necessary to answer the symptom.
+- `prom_ensure_connection` may start a local kubectl port-forward only if
+  `PROMETHEUS_AUTO_PORT_FORWARD=true`.
+- After a successful `prom_ensure_connection`, delegate back to
+  prometheus-analyst to retry the metric query.
+- If `prom_ensure_connection` fails or auto-port-forward is disabled, record
+  Prometheus as an unknown/gap.

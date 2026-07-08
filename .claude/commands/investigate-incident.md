@@ -35,32 +35,62 @@ Examples:
 4. **Choose tools based on the symptom** — do not run every tool by default.
    Map the symptom to the narrowest relevant set:
    - **OOM / restarts** → `k8s_list_pods`, `k8s_describe_pod` (affected pods),
-     `k8s_get_pod_logs`, `k8s_get_recent_namespace_events`, `k8s_top_pods`
+     `k8s_get_recent_namespace_events`, `k8s_top_pods`; `prom_get_pod_memory_usage`
+     and `prom_get_pod_restart_counts` to size and corroborate the pattern with
+     metrics; `k8s_get_pod_logs` for the current pod, and
+     `ibm_logs_search_errors` if the incident spans earlier pod incarnations.
    - **Readiness / liveness probe failures** → `k8s_get_recent_namespace_events`,
-     `k8s_describe_pod` (affected pods), `k8s_get_pod_logs`, `runbook_search`
-   - **Kafka commit rate low / consumer lag** → `runbook_search`,
-     `k8s_get_pod_logs`, pod status via `k8s_list_pods`,
-     `k8s_get_recent_namespace_events`
-   - **Latency / elevated errors** → `k8s_get_pod_logs` and the relevant pod
-     status (`k8s_list_pods` / `k8s_describe_pod` only if logs point to a
-     specific pod)
+     `k8s_describe_pod` (affected pods), `runbook_search`;
+     `ibm_logs_search_probe_failures` for historical probe/app errors across
+     restarts; `prom_get_http_error_rate` and `prom_get_latency_p95` if
+     availability/latency data is available for the service.
+   - **Kafka commit rate low / consumer lag** → `runbook_search` first, then
+     `ibm_logs_search` (or `ibm_logs_search_text` with the specific error
+     string) for historical evidence, plus `k8s_list_pods` and
+     `k8s_get_recent_namespace_events` for current pod status; typed
+     `prom_get_*` metrics if consumer-related metrics are available.
+   - **Latency / elevated errors** → `prom_get_latency_p95` and
+     `prom_get_http_error_rate` as the primary signal; `ibm_logs_search_errors`
+     or `ibm_logs_search_text` for the errors behind the numbers; fall back to
+     `k8s_get_pod_logs` and pod status (`k8s_list_pods` / `k8s_describe_pod`)
+     only if logs point to a specific currently-running pod.
    - If the symptom doesn't clearly match one of the above, start with
      `runbook_search` on the symptom text and let the result steer which
      tools are needed next.
-5. **Use evidence summaries first.** Tool responses return a compact summary
+5. **Prefer IBM Cloud Logs over live pod logs for historical analysis.**
+   `ibm_logs_search*` results survive pod restarts, deployments, and
+   scale-downs and span all pod incarnations of the service. Reserve
+   `k8s_get_pod_logs` for "what is this specific running pod doing right now"
+   checks.
+6. **Prefer typed Prometheus tools over free-form `prom_query_instant`.** Use
+   `prom_get_pod_restart_counts` / `prom_get_pod_cpu_usage` /
+   `prom_get_pod_memory_usage` / `prom_get_http_error_rate` /
+   `prom_get_latency_p95` for anything they cover. Only reach for
+   `prom_query_instant` when none of them answer the question, and keep the
+   query narrow.
+7. **Do not call `prom_ensure_connection` automatically.** If a `prom_get_*`
+   or `prom_query_instant` call reports Prometheus as unreachable, note that
+   as an `unknowns` gap and *suggest* running `prom_ensure_connection` in the
+   report/response. Only actually call it if the user explicitly asks to set
+   up Prometheus connectivity — it may start a local `kubectl port-forward`
+   process (only when `PROMETHEUS_AUTO_PORT_FORWARD=true`), which is outside
+   the scope of a routine read-only investigation.
+8. **Use evidence summaries first.** Tool responses return a compact summary
    plus an `evidence_ref`. Reason from the summary.
-6. **Do not call `evidence_get_detail` unless the summary is insufficient** to
+9. **Do not call `evidence_get_detail` unless the summary is insufficient** to
    confirm or rule out a cause — e.g. the summary is truncated at a point that
    matters, or you need the full stack trace/log body to verify a hypothesis.
-7. **Produce a structured incident report grounded in evidence refs.** Every
-   claim must cite the `evidence_ref` it came from. Do not claim a root cause
-   without evidence.
-8. **Explicitly list what was ruled out and what remains unknown.** State which
-   candidate causes the evidence excludes, and use `unknowns` for anything the
-   gathered evidence can't confirm.
-9. **Read-only only.** Do not use shell commands or raw `kubectl` — only the
-   narrow, typed MCP tools. Never run or suggest `kubectl delete`, `apply`,
-   `patch`, `scale`, `rollout restart`, `helm upgrade`, or `kubectl exec`. Mark
-   any production-impacting remediation as `requires_human: true`.
+10. **Produce a structured incident report grounded in evidence refs.** Every
+    claim must cite the `evidence_ref` it came from. Do not claim a root cause
+    without evidence.
+11. **Explicitly list what was ruled out and what remains unknown.** State
+    which candidate causes the evidence excludes, and use `unknowns` for
+    anything the gathered evidence can't confirm — including missing
+    `PROMETHEUS_URL`, `IBM_CLOUD_API_KEY`, or `IBM_LOGS_ENDPOINT` config, or
+    an unreachable Prometheus, reported by a tool.
+12. **Read-only only.** Do not use shell commands or raw `kubectl` — only the
+    narrow, typed MCP tools. Never run or suggest `kubectl delete`, `apply`,
+    `patch`, `scale`, `rollout restart`, `helm upgrade`, or `kubectl exec`.
+    Mark any production-impacting remediation as `requires_human: true`.
 
 ARGUMENTS: namespace, service, symptom, since_minutes

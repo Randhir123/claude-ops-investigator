@@ -68,3 +68,38 @@ def test_store_k8s_tool_result_returns_evidence_record(monkeypatch, tmp_path):
     assert result["data"]["content_type"] == "k8s.namespace_events"
     assert result["data"]["metadata"]["namespace"] == "si"
     assert result["data"]["size_bytes"] > 0
+
+
+def test_store_k8s_tool_result_uses_custom_summarizer(monkeypatch, tmp_path):
+    from claude_ops.evidence import k8s_evidence
+    from claude_ops.evidence.raw_store import store_raw_evidence as real_store_raw_evidence
+    from claude_ops.evidence.summarizers import summarize_k8s_events
+
+    def fake_store_raw_evidence(*, content_type, raw, summary, metadata):
+        return real_store_raw_evidence(
+            content_type=content_type,
+            raw=raw,
+            summary=summary,
+            metadata=metadata,
+            artifact_dir=tmp_path,
+        )
+
+    monkeypatch.setattr(k8s_evidence, "store_raw_evidence", fake_store_raw_evidence)
+
+    events_text = (
+        "LAST SEEN   TYPE      REASON      OBJECT              MESSAGE\n"
+        "1m          Warning   Unhealthy   pod/event-data-abc  Liveness probe failed\n"
+    )
+
+    result = k8s_evidence.store_k8s_tool_result(
+        content_type="k8s.namespace_events",
+        result={"isError": False, "data": events_text},
+        label="recent events",
+        metadata={"namespace": "si"},
+        summarize=summarize_k8s_events,
+    )
+
+    summary = result["data"]["summary"]
+    assert "1 Warning" in summary
+    assert "1 Unhealthy" in summary
+    assert "Liveness probe failed" in summary

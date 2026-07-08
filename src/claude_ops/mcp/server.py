@@ -32,8 +32,10 @@ from claude_ops.tools.k8s_tools import (
     top_pods,
 )
 from claude_ops.tools.runbook_tools import get_runbook_catalog, search_runbooks
+from claude_ops.tools import prometheus_tools, prometheus_preflight, ibm_logs_tools
 from claude_ops.evidence.k8s_evidence import store_k8s_tool_result
 from claude_ops.evidence.raw_store import load_raw_evidence
+from claude_ops.evidence.summarizers import summarize_k8s_events
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -141,6 +143,7 @@ def k8s_get_recent_namespace_events(namespace: str) -> str:
             result=result,
             label=f"recent events in namespace {namespace}",
             metadata={"namespace": namespace},
+            summarize=summarize_k8s_events,
         )
     )
 
@@ -164,6 +167,109 @@ def runbook_search(query: str) -> str:
     probe failure.
     """
     return _json(search_runbooks(query=query))
+
+
+@mcp.tool()
+def prom_query_instant(promql: str) -> str:
+    """Run a read-only, bounded instant PromQL query against Prometheus.
+
+    Prefer the typed prom_get_* tools for common questions; use this only when
+    they don't cover what you need. Requires PROMETHEUS_URL. Rejects
+    excessively long queries or unbounded range durations. Raw Prometheus JSON
+    is stored as evidence, not returned directly — use the compact summary and
+    evidence_ref.
+    """
+    return _json(prometheus_tools.prom_query_instant(promql))
+
+
+@mcp.tool()
+def prom_get_pod_restart_counts(namespace: str, service: str) -> str:
+    """Get current pod container restart counts for a service via Prometheus.
+
+    Use to corroborate OOMKilled/CrashLoopBackOff patterns seen in Kubernetes
+    events with cluster-wide restart metrics.
+    """
+    return _json(prometheus_tools.prom_get_pod_restart_counts(namespace=namespace, service=service))
+
+
+@mcp.tool()
+def prom_get_pod_cpu_usage(namespace: str, service: str) -> str:
+    """Get current per-pod CPU usage (5m rate) for a service via Prometheus."""
+    return _json(prometheus_tools.prom_get_pod_cpu_usage(namespace=namespace, service=service))
+
+
+@mcp.tool()
+def prom_get_pod_memory_usage(namespace: str, service: str) -> str:
+    """Get current per-pod working-set memory usage for a service via Prometheus.
+
+    Use to confirm memory pressure behind OOMKilled restarts.
+    """
+    return _json(prometheus_tools.prom_get_pod_memory_usage(namespace=namespace, service=service))
+
+
+@mcp.tool()
+def prom_get_http_error_rate(namespace: str, service: str, since_minutes: int = 60) -> str:
+    """Get the HTTP 5xx error rate for a service over a bounded time window via Prometheus."""
+    return _json(prometheus_tools.prom_get_http_error_rate(namespace=namespace, service=service, since_minutes=since_minutes))
+
+
+@mcp.tool()
+def prom_get_latency_p95(namespace: str, service: str, since_minutes: int = 60) -> str:
+    """Get p95 HTTP request latency for a service over a bounded time window via Prometheus."""
+    return _json(prometheus_tools.prom_get_latency_p95(namespace=namespace, service=service, since_minutes=since_minutes))
+
+
+@mcp.tool()
+def prom_ensure_connection() -> str:
+    """Check Prometheus reachability, and only start a local kubectl port-forward if PROMETHEUS_AUTO_PORT_FORWARD=true.
+
+    Call this explicitly when a prom_get_*/prom_query_instant tool reports
+    Prometheus is unreachable — it is never called automatically by those
+    tools, and the investigation workflow does not call it automatically
+    either. This is the only tool in this project that may start a `kubectl
+    port-forward` process, and it only does so when
+    PROMETHEUS_AUTO_PORT_FORWARD=true; otherwise it only reports reachability
+    and returns instructions for enabling port-forward.
+    """
+    return _json(prometheus_preflight.ensure_prometheus())
+
+
+@mcp.tool()
+def ibm_logs_search(namespace: str, query: str, app: str | None = None, since_minutes: int = 60, limit: int = 200) -> str:
+    """Search IBM Cloud Logs (persistent, cross-restart/cross-deployment) for a plain-text keyword.
+
+    Prefer this over k8s_get_pod_logs for historical analysis: these logs
+    survive pod restarts, deployments, and scale-downs, and span all pod
+    incarnations of a service. Requires IBM_CLOUD_API_KEY and
+    IBM_LOGS_ENDPOINT. Returns a compact summary plus evidence_ref.
+    """
+    return _json(
+        ibm_logs_tools.ibm_logs_search(namespace=namespace, query=query, app=app, since_minutes=since_minutes, limit=limit)
+    )
+
+
+@mcp.tool()
+def ibm_logs_search_errors(namespace: str, app: str, since_minutes: int = 60, limit: int = 200) -> str:
+    """Search IBM Cloud Logs for ERROR-level log lines for a specific app."""
+    return _json(
+        ibm_logs_tools.ibm_logs_search_errors(namespace=namespace, app=app, since_minutes=since_minutes, limit=limit)
+    )
+
+
+@mcp.tool()
+def ibm_logs_search_probe_failures(namespace: str, app: str, since_minutes: int = 60, limit: int = 200) -> str:
+    """Search IBM Cloud Logs for liveness/readiness probe failure log lines for a specific app."""
+    return _json(
+        ibm_logs_tools.ibm_logs_search_probe_failures(namespace=namespace, app=app, since_minutes=since_minutes, limit=limit)
+    )
+
+
+@mcp.tool()
+def ibm_logs_search_text(namespace: str, app: str, text: str, since_minutes: int = 60, limit: int = 200) -> str:
+    """Search IBM Cloud Logs for an arbitrary plain-text pattern scoped to a specific app."""
+    return _json(
+        ibm_logs_tools.ibm_logs_search_text(namespace=namespace, app=app, text=text, since_minutes=since_minutes, limit=limit)
+    )
 
 
 @mcp.tool()
@@ -204,8 +310,11 @@ Workflow:
 2. Use k8s_list_pods with label_selector="app={service}".
 3. Inspect recent namespace events.
 4. For relevant pods, use describe/log/top tools.
-5. Search runbooks for matching symptoms.
-6. Produce an evidence-grounded incident report.
+5. If deeper evidence is needed, use typed prom_get_* tools for metrics
+   (restarts, CPU, memory, error rate, latency) and ibm_logs_search_* tools
+   for historical logs spanning pod restarts and deployments.
+6. Search runbooks for matching symptoms.
+7. Produce an evidence-grounded incident report.
 
 Rules:
 - Do not run or suggest destructive commands without human approval.

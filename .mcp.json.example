@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "claude-ops-support-agent": {
+    "claude-ops-investigator": {
       "command": "python",
       "args": [
         "-m",

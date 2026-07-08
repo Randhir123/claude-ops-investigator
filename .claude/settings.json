@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-ops-investigator__k8s_get_pod_logs",
+      "mcp__claude-ops-investigator__evidence_get_detail",
+      "mcp__claude-ops-investigator__k8s_describe_pod",
+      "mcp__claude-ops-investigator__runbook_search",
+      "mcp__claude-ops-investigator__k8s_get_recent_namespace_events",
+      "mcp__claude-ops-investigator__k8s_list_pods",
+      "mcp__claude-ops-investigator__k8s_top_pods"
+    ]
+  }
+}

@@ -5,7 +5,8 @@ description = "A context-aware Kubernetes incident investigation assistant built
 requires-python = ">=3.10"
 dependencies = [
   "jsonschema>=4.23.0",
-  "httpx>=0.27.0"
+  "httpx>=0.27.0",
+  "python-dotenv>=1.0.0"
 ]
 
 [project.optional-dependencies]

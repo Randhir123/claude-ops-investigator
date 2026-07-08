@@ -69,6 +69,27 @@ Run tests:
 pytest
 ```
 
+## Local environment
+
+The MCP server needs environment variables for the optional Prometheus and
+IBM Cloud Logs tools (`PROMETHEUS_URL`, `IBM_LOGS_ENDPOINT`,
+`IBM_CLOUD_API_KEY`, etc.). Configure them locally with a `.env` file — it is
+gitignored and loaded automatically, no secrets ever need to go in
+`.mcp.json`.
+
+```bash
+cp .env.example .env
+# edit .env with your local values
+source .venv/bin/activate
+claude
+```
+
+`src/claude_ops/mcp/server.py` calls `load_dotenv()` at startup, so the MCP
+server picks up `.env` automatically when Claude Code launches it — no
+manual `export` needed. Missing `.env` is fine; tools that need a variable
+that still isn't set return a structured config error instead of failing
+silently.
+
 ## Recommended first live use
 
 Use a non-production namespace first.

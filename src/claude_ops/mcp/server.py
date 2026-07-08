@@ -22,6 +22,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+# Load .env before importing tool modules that read Prometheus/IBM Cloud Logs
+# env vars at call time (PROMETHEUS_URL, IBM_LOGS_ENDPOINT, IBM_CLOUD_API_KEY,
+# etc.). Safe to call when no .env file exists — it's a no-op in that case,
+# and it never overrides variables already set in the real environment.
+load_dotenv()
+
 from mcp.server.fastmcp import FastMCP
 
 from claude_ops.tools.k8s_tools import (

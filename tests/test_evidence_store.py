@@ -22,6 +22,46 @@ def test_store_and_load_raw_evidence(tmp_path):
     assert loaded["metadata"]["service"] == "event-data"
 
 
+def test_distinct_metadata_yields_distinct_evidence_refs_for_identical_raw(tmp_path):
+    """Two Prometheus tool calls with identical (empty) result bodies but
+    different metric metadata must not collide on the same evidence_ref."""
+    empty_result = {"resultType": "vector", "result": []}
+
+    error_rate_record = store_raw_evidence(
+        content_type="prometheus.query_result",
+        raw=empty_result,
+        summary="HTTP 5xx error rate for si/multi-system-processor over last 60m",
+        metadata={
+            "namespace": "si",
+            "service": "multi-system-processor",
+            "metric": "http_error_rate",
+            "since_minutes": 60,
+            "promql": 'sum(rate(http_requests_total{namespace="si", service="multi-system-processor", status=~"5.."}[60m]))',
+        },
+        artifact_dir=tmp_path,
+    )
+    latency_record = store_raw_evidence(
+        content_type="prometheus.query_result",
+        raw=empty_result,
+        summary="p95 latency for si/multi-system-processor over last 60m",
+        metadata={
+            "namespace": "si",
+            "service": "multi-system-processor",
+            "metric": "latency_p95",
+            "since_minutes": 60,
+            "promql": 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="si", service="multi-system-processor"}[60m])) by (le))',
+        },
+        artifact_dir=tmp_path,
+    )
+
+    assert error_rate_record.evidence_ref != latency_record.evidence_ref
+
+    loaded_error_rate = load_raw_evidence(error_rate_record.evidence_ref, artifact_dir=tmp_path)
+    loaded_latency = load_raw_evidence(latency_record.evidence_ref, artifact_dir=tmp_path)
+    assert loaded_error_rate["metadata"]["metric"] == "http_error_rate"
+    assert loaded_latency["metadata"]["metric"] == "latency_p95"
+
+
 def test_store_k8s_tool_result_preserves_errors():
     from claude_ops.evidence.k8s_evidence import store_k8s_tool_result
 

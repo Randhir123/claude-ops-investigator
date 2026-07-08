@@ -16,9 +16,19 @@ def _utc_now_compact() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _stable_hash(value: Any) -> str:
-    raw = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:12]
+def _stable_hash(*, content_type: str, metadata: dict[str, Any], raw: Any) -> str:
+    """Hash content_type + metadata + raw together.
+
+    Hashing `raw` alone lets two distinct tool calls (e.g. different metric
+    names) collide on the same evidence_ref whenever they happen to return the
+    same empty/identical payload in the same second, silently overwriting one
+    artifact with another. Including content_type and metadata (which carry
+    the tool/query identity) makes the ref unique per call even when the raw
+    body is identical.
+    """
+    payload = {"content_type": content_type, "metadata": metadata, "raw": raw}
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:12]
 
 
 def store_raw_evidence(
@@ -34,7 +44,7 @@ def store_raw_evidence(
     artifact_root.mkdir(parents=True, exist_ok=True)
 
     metadata = metadata or {}
-    evidence_ref = f"ev_{_utc_now_compact()}_{_stable_hash(raw)}"
+    evidence_ref = f"ev_{_utc_now_compact()}_{_stable_hash(content_type=content_type, metadata=metadata, raw=raw)}"
     artifact_path = artifact_root / f"{evidence_ref}.json"
 
     payload = {

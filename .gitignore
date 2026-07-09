@@ -17,8 +17,8 @@ build/
 !.env.example
 
 # Runtime outputs - keep directories, ignore contents
-# runs/* - temporarily disabled for investigation skill execution
-# !runs/.gitkeep
+runs/* 
+!runs/.gitkeep
 reports/*
 !reports/.gitkeep
 artifacts/*

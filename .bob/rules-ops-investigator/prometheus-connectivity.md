@@ -34,7 +34,7 @@ Error response structure:
 ```json
 {
   "isError": true,
-  "errorCategory": "config|connectivity|validation|timeout",
+  "errorCategory": "transient|validation|permission|business|unknown",
   "isRetryable": true|false,
   "message": "descriptive error message",
   "attempted": {...},
@@ -132,7 +132,7 @@ if not prometheus_url:
 if not prometheus_url:
     return {
         "isError": True,
-        "errorCategory": "config",
+        "errorCategory": "validation",
         "message": "PROMETHEUS_URL not configured",
         "alternatives": ["Set PROMETHEUS_URL in .env"]
     }

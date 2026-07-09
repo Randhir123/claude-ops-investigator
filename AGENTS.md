@@ -44,7 +44,7 @@ claude-ops-investigator/
 │   ├── schemas/              # Structured output schemas
 │   │   └── incident_report_schema.py
 │   └── hooks.py              # Application-level safety gates
-├── .claude/                  # Claude Code project configuration
+├── .claude/                  # Claude Code harness (subagent-based)
 │   ├── agents/               # Subagent definitions
 │   │   ├── incident-coordinator.md
 │   │   ├── k8s-evidence-collector.md
@@ -61,10 +61,33 @@ claude-ops-investigator/
 │   │   └── validate_final_report.py
 │   ├── rules/                # Project-specific rules
 │   └── skills/               # Reusable investigation patterns
+├── .bob/                     # Bob Shell harness (skill-based)
+│   ├── mcp.json              # MCP server configuration
+│   ├── custom_modes.yaml     # Custom mode definitions
+│   ├── skills/               # Investigation skills
+│   │   └── investigate-incident/
+│   │       └── SKILL.md      # Single-agent investigation workflow
+│   └── rules-ops-investigator/  # Operational rules
+│       ├── read-only-safety.md
+│       ├── evidence-ref-discipline.md
+│       ├── symptom-driven-tool-choice.md
+│       ├── prometheus-connectivity.md
+│       ├── unrelated-log-noise.md
+│       └── scratchpad-and-briefs.md
+├── runs/                     # Investigation runs (Bob harness)
+│   └── <investigation_id>/   # Format: namespace-service-YYYYMMDDTHHMMSSZ
+│       ├── scratchpad/
+│       │   ├── coordinator-brief.md  # Investigation progress
+│       │   └── workflow-audit.md     # Tool call log
+│       └── report.md         # Final incident report
+├── reports/                  # Optional report copies
+│   └── <investigation_id>.md # Copy of final report
 ├── data/                     # Static reference data
 │   ├── runbooks/             # Incident runbooks
 │   ├── runbook_index.json    # Runbook catalog
 │   └── service_catalog.json  # Known services
+├── docs/                     # Documentation
+│   └── bob-harness.md        # Bob Shell harness guide
 ├── tests/                    # Test suite
 └── artifacts/                # Evidence storage (gitignored)
 ```
@@ -227,9 +250,10 @@ store_k8s_tool_result(
 **Error handling**:
 ```python
 # Structured errors, never silent failures
+# Valid errorCategory values: "transient", "validation", "permission", "business", "unknown"
 {
     "isError": True,
-    "errorCategory": "config",  # or "connectivity", "validation", "timeout"
+    "errorCategory": "validation",  # or "transient", "permission", "business", "unknown"
     "isRetryable": False,
     "message": "PROMETHEUS_URL not configured",
     "attempted": {"namespace": "si", "service": "event-data"},

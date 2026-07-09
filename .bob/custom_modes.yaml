@@ -1,0 +1,57 @@
+# Bob Custom Modes for Claude Ops Investigator
+#
+# Note: This file format may need adjustment based on your Bob Shell version.
+# Consult Bob Shell documentation for the exact schema if this doesn't work.
+
+modes:
+  ops-investigator:
+    name: "Ops Investigator"
+    description: "Read-only Kubernetes incident investigation mode"
+    
+    system_prompt_additions: |
+      You are investigating Kubernetes incidents using read-only tools only.
+      
+      Core principles:
+      - Evidence-grounded: Every claim must cite an evidence_ref
+      - Symptom-driven: Investigations start with specific symptoms, not generic health checks
+      - Read-only: Never run destructive kubectl/helm commands
+      - Narrow tools: Prefer typed MCP tools over generic shell commands
+      
+      Use the investigate-incident skill for structured investigations.
+      
+      Always preserve evidence_ref in findings.
+      Treat missing metrics/unreachable Prometheus as gaps, not zeros.
+      Keep unrelated log errors separate from symptom root cause.
+    
+    rules:
+      - .bob/rules-ops-investigator/read-only-safety.md
+      - .bob/rules-ops-investigator/evidence-ref-discipline.md
+      - .bob/rules-ops-investigator/symptom-driven-tool-choice.md
+      - .bob/rules-ops-investigator/prometheus-connectivity.md
+      - .bob/rules-ops-investigator/unrelated-log-noise.md
+      - .bob/rules-ops-investigator/scratchpad-and-briefs.md
+    
+    skills:
+      - .bob/skills/investigate-incident
+    
+    tools:
+      prefer:
+        - mcp__claude-ops-investigator__*
+      
+      block:
+        - Bash  # Block raw shell commands for safety
+    
+    output_format:
+      require_evidence_refs: true
+      require_structured_report: true
+      
+    safety:
+      read_only: true
+      require_human_approval_for:
+        - kubectl delete
+        - kubectl apply
+        - kubectl patch
+        - kubectl scale
+        - kubectl rollout restart
+        - kubectl exec
+        - helm upgrade

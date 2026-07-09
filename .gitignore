@@ -17,8 +17,8 @@ build/
 !.env.example
 
 # Runtime outputs - keep directories, ignore contents
-runs/*
-!runs/.gitkeep
+# runs/* - temporarily disabled for investigation skill execution
+# !runs/.gitkeep
 reports/*
 !reports/.gitkeep
 artifacts/*
@@ -27,6 +27,7 @@ raw/
 trajectories/
 evals/results/
 evals/runs/
+.bob/notes/
 
 # OS / IDE
 .DS_Store

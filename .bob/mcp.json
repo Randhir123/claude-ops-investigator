@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "claude-ops-investigator": {
+      "command": "python",
+      "args": [
+        "-m",
+        "claude_ops.mcp.server"
+      ],
+      "env": {
+        "PYTHONPATH": "${PWD}/src"
+      }
+    }
+  }
+}

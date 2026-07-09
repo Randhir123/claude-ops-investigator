@@ -181,6 +181,35 @@ manual `export` needed. Missing `.env` is fine; tools that need a variable
 that still isn't set return a structured config error instead of failing
 silently.
 
+## Harness hooks (safety gate + audit trail)
+
+`.claude/settings.json` wires four read-only Claude Code hooks under
+`.claude/hooks/`. They're a harness-level safety net and audit trail that sit
+alongside the application-level guardrails (`src/claude_ops/hooks.py`,
+`schemas/incident_report_schema.py`) — none of them call Kubernetes,
+Prometheus, IBM Cloud Logs, or the Claude API; they only inspect the JSON
+Claude Code already passes them on stdin, and the only files they write are
+JSONL audit logs under `runs/` (gitignored, like the rest of that directory).
+
+| Hook | Event | What it does |
+|---|---|---|
+| `block_unsafe_shell.py` | `PreToolUse` on `Bash` | Denies raw shell `kubectl delete/apply/patch/scale/rollout restart/exec` and `helm upgrade` — the second gate for a destructive command reaching `Bash` directly, bypassing the typed MCP tools that `hooks.py::validate_kubectl_verb` already gates. |
+| `audit_mcp_tool_call.py` | `PostToolUse` on `mcp__claude-ops-investigator__.*` | Appends `{tool_name, timestamp, status, evidence_ref, session_id}` to `runs/mcp-tool-audit.jsonl` for every completed MCP tool call. |
+| `audit_subagent_lifecycle.py` | `SubagentStart` / `SubagentStop` | Appends `{event, timestamp, session_id, subagent_type, description}` to `runs/subagent-audit.jsonl`. |
+| `validate_final_report.py` | `Stop` | If the last assistant message looks like an incident report (mentions "Subagent usage audit", "incident report", or `requires_human`), checks it contains `evidence_ref`, a "Subagent usage audit" table, `ruled_out`, `unknowns`, and an explicit confirmed/not-confirmed statement — and blocks the stop with a reason if any are missing. Ordinary conversational turns are left alone. |
+
+### Disabling hooks locally
+
+Two ways, from least to most surgical:
+
+- **Disable everything**: add `"disableAllHooks": true` to
+  `.claude/settings.local.json` (gitignored, personal — never commit this to
+  the project's shared `.claude/settings.json`).
+- **Disable just these four**: set `CLAUDE_OPS_HOOKS_DISABLED=1` in your
+  shell environment before launching `claude`. Each script checks this at
+  the top and no-ops immediately — no audit lines written, no shell command
+  blocked, no report validated.
+
 ## Recommended first live use
 
 Use a non-production namespace first.

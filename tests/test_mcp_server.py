@@ -62,3 +62,16 @@ def test_investigate_incident_prompt_is_symptom_driven():
     text = rendered.messages[0].content.text
     assert "OOMKilled restarts" in text
     assert "incident-coordinator" in text
+
+
+def test_evidence_get_detail_not_found_is_structured_validation_error():
+    import json
+
+    import claude_ops.mcp.server as server
+
+    result = json.loads(server.evidence_get_detail("ev_does_not_exist"))
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert result["isRetryable"] is False
+    assert any("evidence_ref" in alt for alt in result["alternatives"])

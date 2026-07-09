@@ -256,3 +256,121 @@ def test_ibm_logs_query_permission_error_on_401(monkeypatch):
 
     assert result["isError"] is True
     assert result["errorCategory"] == "permission"
+    assert result["isRetryable"] is False
+    assert any("IBM_CLOUD_API_KEY" in alt or "IBM_LOGS_ENDPOINT" in alt for alt in result["alternatives"])
+    joined = " ".join(result["alternatives"]).lower()
+    assert "delete" not in joined and "patch" not in joined and "exec" not in joined
+
+
+def test_ibm_logs_query_permission_error_on_403(monkeypatch):
+    monkeypatch.setenv("IBM_CLOUD_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_LOGS_ENDPOINT", "https://guid.api.us-south.logs.cloud.ibm.com")
+    monkeypatch.setattr(httpx, "request", _fake_iam_request())
+
+    def fake_stream(method, url, **kwargs):
+        return FakeStreamResponse(403, lines=[], text="forbidden")
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "permission"
+    assert result["isRetryable"] is False
+
+
+def test_ibm_logs_query_rate_limited_on_429_is_transient_and_retryable(monkeypatch):
+    monkeypatch.setenv("IBM_CLOUD_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_LOGS_ENDPOINT", "https://guid.api.us-south.logs.cloud.ibm.com")
+    monkeypatch.setattr(httpx, "request", _fake_iam_request())
+
+    def fake_stream(method, url, **kwargs):
+        return FakeStreamResponse(429, lines=[], text="rate limit exceeded")
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "transient"
+    assert result["isRetryable"] is True
+    assert any("backoff" in alt.lower() or "retry" in alt.lower() for alt in result["alternatives"])
+
+
+def test_ibm_logs_query_5xx_is_transient_and_retryable(monkeypatch):
+    monkeypatch.setenv("IBM_CLOUD_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_LOGS_ENDPOINT", "https://guid.api.us-south.logs.cloud.ibm.com")
+    monkeypatch.setattr(httpx, "request", _fake_iam_request())
+
+    def fake_stream(method, url, **kwargs):
+        return FakeStreamResponse(503, lines=[], text="service unavailable")
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "transient"
+    assert result["isRetryable"] is True
+    assert any("gap" in alt.lower() for alt in result["alternatives"])
+
+
+def test_ibm_logs_missing_endpoint_does_not_expose_secrets(monkeypatch):
+    monkeypatch.setenv("IBM_CLOUD_API_KEY", "super-secret-key-value")
+    monkeypatch.delenv("IBM_LOGS_ENDPOINT", raising=False)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("should not make a network call without IBM_LOGS_ENDPOINT")
+
+    monkeypatch.setattr(httpx, "request", unexpected)
+    monkeypatch.setattr(httpx, "stream", unexpected)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert "IBM_LOGS_ENDPOINT" in result["message"]
+
+    dumped = json.dumps(result)
+    assert "super-secret-key-value" not in dumped
+
+
+def test_ibm_logs_missing_api_key_does_not_expose_secrets(monkeypatch):
+    monkeypatch.setenv("IBM_LOGS_ENDPOINT", "https://guid.api.us-south.logs.cloud.ibm.com")
+    monkeypatch.delenv("IBM_CLOUD_API_KEY", raising=False)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("should not reach the network without IBM_CLOUD_API_KEY")
+
+    monkeypatch.setattr(httpx, "request", unexpected)
+    monkeypatch.setattr(httpx, "stream", unexpected)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert "IBM_CLOUD_API_KEY" in result["message"]
+    assert result["alternatives"]
+
+
+def test_ibm_logs_iam_token_error_redacts_api_key_from_response_body(monkeypatch):
+    monkeypatch.setenv("IBM_CLOUD_API_KEY", "my-leaked-looking-key")
+    monkeypatch.setenv("IBM_LOGS_ENDPOINT", "https://guid.api.us-south.logs.cloud.ibm.com")
+
+    def fake_iam_error(method, url, **kwargs):
+        # Simulate an IAM error body that echoes the bad apikey back.
+        return FakeResponse(400, text="invalid apikey: my-leaked-looking-key")
+
+    monkeypatch.setattr(httpx, "request", fake_iam_error)
+
+    def unexpected_stream(*args, **kwargs):
+        raise AssertionError("should not query logs without a token")
+
+    monkeypatch.setattr(httpx, "stream", unexpected_stream)
+
+    result = ibm_logs_tools.ibm_logs_search(namespace="si", query="ERROR")
+
+    assert result["isError"] is True
+    dumped = json.dumps(result)
+    assert "my-leaked-looking-key" not in dumped
+    assert "REDACTED" in dumped

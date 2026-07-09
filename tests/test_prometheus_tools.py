@@ -226,6 +226,106 @@ def test_prom_query_instant_maps_server_error_to_transient(monkeypatch):
     assert result["isRetryable"] is True
 
 
+def test_prom_query_instant_missing_config_does_not_treat_as_zero(monkeypatch):
+    monkeypatch.delenv("PROMETHEUS_URL", raising=False)
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError("should not make a network call without PROMETHEUS_URL")
+
+    monkeypatch.setattr(httpx, "request", unexpected_request)
+
+    result = prometheus_tools.prom_query_instant("up")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert result["isRetryable"] is False
+    assert any("PROMETHEUS_URL" in alt for alt in result["alternatives"])
+    assert any("gap" in alt.lower() for alt in result["alternatives"])
+
+
+def test_prom_query_instant_connection_error_includes_preflight_hint(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+
+    def fake_request(method, url, **kwargs):
+        raise httpx.ConnectError("Connection refused")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_query_instant("up")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "transient"
+    assert result["isRetryable"] is True
+    assert any("prom_ensure_connection" in alt for alt in result["alternatives"])
+
+
+def test_prom_query_instant_timeout_includes_preflight_hint(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+
+    def fake_request(method, url, **kwargs):
+        raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_query_instant("up")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "transient"
+    assert result["isRetryable"] is True
+    assert any("prom_ensure_connection" in alt for alt in result["alternatives"])
+
+
+def test_prom_query_instant_401_maps_to_permission_not_retryable(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+
+    def fake_request(method, url, **kwargs):
+        return FakeResponse(401, text="unauthorized")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_query_instant("up")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "permission"
+    assert result["isRetryable"] is False
+    assert any("authenticat" in alt.lower() or "auth" in alt.lower() for alt in result["alternatives"])
+    # never suggests bypassing/destructive workarounds
+    joined = " ".join(result["alternatives"]).lower()
+    assert "delete" not in joined
+    assert "bypass" not in joined or "do not" in joined
+
+
+def test_prom_query_instant_403_maps_to_permission_not_retryable(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+
+    def fake_request(method, url, **kwargs):
+        return FakeResponse(403, text="forbidden")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_query_instant("up")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "permission"
+    assert result["isRetryable"] is False
+
+
+def test_prom_query_instant_400_includes_promql_guidance(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
+
+    def fake_request(method, url, **kwargs):
+        return FakeResponse(400, text='{"status":"error","errorType":"bad_data","error":"parse error"}')
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = prometheus_tools.prom_query_instant("up(")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "validation"
+    assert result["isRetryable"] is False
+    assert any("promql" in alt.lower() for alt in result["alternatives"])
+
+
 def test_range_query_hits_query_range_endpoint(monkeypatch):
     monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")
 

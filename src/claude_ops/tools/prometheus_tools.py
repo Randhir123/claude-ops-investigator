@@ -59,21 +59,66 @@ def _missing_config_error(attempted: dict[str, Any]) -> dict[str, Any]:
         alternatives=[
             "Set the PROMETHEUS_URL environment variable to the Prometheus base URL, e.g. http://prometheus:9090",
             _PREFLIGHT_HINT,
+            "Record this as an unknowns/gap — do not report zero restarts/errors/latency because metrics could not be retrieved",
         ],
     ).to_dict()
 
 
-def _with_preflight_hint(result: dict[str, Any]) -> dict[str, Any]:
-    """Append a prom_ensure_connection hint to transient (likely connectivity) errors.
+def _add_alternatives(result: dict[str, Any], *hints: str) -> dict[str, Any]:
+    alternatives = list(result.get("alternatives") or [])
+    changed = False
+    for hint in hints:
+        if hint not in alternatives:
+            alternatives.append(hint)
+            changed = True
+    return {**result, "alternatives": alternatives} if changed else result
 
-    This only ever *suggests* the preflight tool — prometheus_tools.py never
-    calls ensure_prometheus()/starts a port-forward itself.
+
+def _augment_prometheus_error(result: dict[str, Any]) -> dict[str, Any]:
+    """Layer Prometheus-specific, customer-safe guidance onto a generic ToolError dict.
+
+    `http_client.request_json` categorizes failures generically (it's shared
+    with ibm_logs_tools), so its default `alternatives` are backend-agnostic.
+    This adds guidance specific to what a given failure shape usually means
+    for Prometheus, without changing `errorCategory`/`isRetryable` — those
+    stay whatever `request_json` decided. Prometheus queries never carry
+    secrets in this project, so there's nothing to redact here (contrast
+    with `ibm_logs_tools`, which redacts the API key/token).
     """
-    if result.get("isError") and result.get("errorCategory") == "transient":
-        alternatives = list(result.get("alternatives") or [])
-        if _PREFLIGHT_HINT not in alternatives:
-            alternatives.append(_PREFLIGHT_HINT)
-        result = {**result, "alternatives": alternatives}
+    if not result.get("isError"):
+        return result
+
+    category = result.get("errorCategory")
+    message = result.get("message", "")
+
+    if category == "transient":
+        # Covers connection refused/timeout (network-level) as well as an
+        # HTTP-level 5xx/429 from Prometheus itself — in every case the
+        # caller can't tell "Prometheus is down" from "no data," so point at
+        # the coordinator-owned preflight tool either way. The underlying
+        # message/isRetryable already say whether it was a timeout, network
+        # error, or HTTP status; this only adds the connectivity hint.
+        return _add_alternatives(
+            result,
+            _PREFLIGHT_HINT,
+            "Missing/zero-looking results after a transient error are a gap, not confirmed zero/normal metrics",
+        )
+
+    if category == "validation" and "HTTP 400" in message:
+        return _add_alternatives(
+            result,
+            "Check PromQL syntax and label names — see partialResults for Prometheus's own parse error",
+            "Prefer a typed prom_get_* tool over free-form PromQL (prom_query_instant) if this query was hand-written",
+        )
+
+    if category == "permission":
+        return _add_alternatives(
+            result,
+            "This Prometheus endpoint rejected the request as unauthenticated/unauthorized — "
+            "verify PROMETHEUS_URL points to an endpoint this read-only client can reach without extra auth",
+            "Ask a human to configure the required access — do not attempt to add or bypass authentication yourself",
+        )
+
     return result
 
 
@@ -117,7 +162,7 @@ def _instant_query(promql: str, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) ->
     if invalid is not None:
         return invalid
 
-    return _with_preflight_hint(
+    return _augment_prometheus_error(
         request_json("GET", f"{base_url}{_QUERY_PATH}", params={"query": promql}, timeout=timeout)
     )
 
@@ -138,7 +183,7 @@ def _range_query(
     if invalid is not None:
         return invalid
 
-    return _with_preflight_hint(
+    return _augment_prometheus_error(
         request_json(
             "GET",
             f"{base_url}{_QUERY_RANGE_PATH}",

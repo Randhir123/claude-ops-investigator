@@ -29,7 +29,7 @@ import httpx
 from claude_ops.errors import ToolError, ok
 from claude_ops.evidence.raw_store import store_raw_evidence
 from claude_ops.evidence.summarizers import summarize_log_matches
-from claude_ops.tools.http_client import request_json
+from claude_ops.tools.http_client import redact_secrets, request_json
 
 _IAM_TOKEN_URL = "https://iam.cloud.ibm.com/identity/token"
 _QUERY_PATH = "/v1/query"
@@ -45,7 +45,10 @@ def _missing_config_error(missing_var: str, attempted: dict[str, Any]) -> dict[s
         False,
         f"{missing_var} is not set.",
         attempted=attempted,
-        alternatives=[f"Set the {missing_var} environment variable before querying IBM Cloud Logs"],
+        alternatives=[
+            f"Set the {missing_var} environment variable before querying IBM Cloud Logs",
+            "Record this as an unknowns/gap — do not report 'no matching logs' because IBM Cloud Logs could not be queried",
+        ],
     ).to_dict()
 
 
@@ -79,6 +82,9 @@ def _get_iam_token() -> dict[str, Any]:
             "Accept": "application/json",
         },
         timeout=30.0,
+        # IBM's IAM endpoint could in principle echo a bad apikey back in an
+        # error body; strip it so it never reaches a tool result either way.
+        redact=[api_key],
     )
     if result.get("isError"):
         return result
@@ -256,6 +262,13 @@ def _run_dataprime_query(
         "dataprime_query": dataprime_query,
     }
 
+    # Values that must never surface in a returned message/partialResults,
+    # even if IBM's API echoes request details back in an error body.
+    secrets = [os.environ.get("IBM_CLOUD_API_KEY", "").strip(), token]
+
+    def _scrub(text: str | None) -> str | None:
+        return redact_secrets(text, secrets)
+
     try:
         with httpx.stream(
             "POST",
@@ -274,27 +287,70 @@ def _run_dataprime_query(
                     False,
                     f"IBM Cloud Logs authorization failed ({resp.status_code})",
                     attempted=attempted,
+                    alternatives=[
+                        "Verify IBM_CLOUD_API_KEY has access to this IBM Cloud Logs instance",
+                        "Verify IBM_LOGS_ENDPOINT points to the correct instance/region",
+                        "Request human approval/access if this is expected to be restricted — do not attempt to work around it",
+                    ],
+                ).to_dict()
+            if resp.status_code == 429:
+                resp.read()
+                return ToolError(
+                    "transient",
+                    True,
+                    "IBM Cloud Logs rate limited the query (HTTP 429)",
+                    attempted=attempted,
+                    partialResults=_scrub(resp.text[:500]),
+                    alternatives=[
+                        "Wait and retry with backoff",
+                        "Reduce since_minutes or limit to lower query cost",
+                        "Avoid issuing many searches in rapid succession",
+                    ],
                 ).to_dict()
             if resp.status_code >= 400:
                 resp.read()
                 is_server_error = resp.status_code >= 500
+                alternatives = (
+                    [
+                        "Retry after a short delay",
+                        "If this persists, treat IBM Cloud Logs as temporarily unavailable — this is a gap, not zero matching logs",
+                    ]
+                    if is_server_error
+                    else [
+                        "Check namespace/app/query parameters",
+                        "Narrow since_minutes or limit if the request was rejected as too large",
+                    ]
+                )
                 return ToolError(
                     "transient" if is_server_error else "validation",
                     is_server_error,
                     f"IBM Cloud Logs query failed with HTTP {resp.status_code}",
                     attempted=attempted,
-                    partialResults=resp.text[:500],
+                    partialResults=_scrub(resp.text[:500]),
+                    alternatives=alternatives,
                 ).to_dict()
             entries, api_error = _parse_streaming_lines(resp.iter_lines(), limit)
     except httpx.TimeoutException:
-        return ToolError("transient", True, "IBM Cloud Logs query timed out", attempted=attempted).to_dict()
+        return ToolError(
+            "transient",
+            True,
+            "IBM Cloud Logs query timed out",
+            attempted=attempted,
+            alternatives=["Retry", "Narrow since_minutes or limit"],
+        ).to_dict()
     except httpx.RequestError as exc:
         return ToolError(
-            "transient", True, f"Network error querying IBM Cloud Logs: {exc}", attempted=attempted
+            "transient",
+            True,
+            _scrub(f"Network error querying IBM Cloud Logs: {exc}"),
+            attempted=attempted,
+            alternatives=["Retry", "Check IBM_LOGS_ENDPOINT configuration"],
         ).to_dict()
 
     if api_error:
-        return ToolError("unknown", False, f"IBM Cloud Logs API error: {api_error}", attempted=attempted).to_dict()
+        return ToolError(
+            "unknown", False, _scrub(f"IBM Cloud Logs API error: {api_error}"), attempted=attempted
+        ).to_dict()
 
     entries.sort(key=lambda entry: entry["timestamp"])
     return ok({"entries": entries, "dataprime_query": dataprime_query})

@@ -41,12 +41,47 @@ def _run_kubectl(args: list[str], timeout_seconds: int = 20) -> dict[str, Any]:
         ).to_dict()
 
     if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        lower = stderr.lower()
+
+        if "forbidden" in lower or "unauthorized" in lower:
+            return ToolError(
+                "permission",
+                False,
+                stderr or "kubectl command failed: forbidden",
+                attempted={"kubectl_args": args},
+                partialResults=stdout or None,
+                alternatives=[
+                    "Verify this identity has the required read-only RBAC (get/list/watch — see k8s/readonly-rbac.yaml)",
+                    "Ask a human to grant the missing read-only permission — do not attempt to work around this with elevated, destructive, or exec-based commands",
+                ],
+            ).to_dict()
+
+        if verb == "top" and (
+            "metrics not available" in lower
+            or "metrics api not available" in lower
+            or "metrics.k8s.io" in lower
+            or "could not find the requested resource" in lower
+        ):
+            return ToolError(
+                "business",
+                False,
+                stderr or "kubectl top failed: metrics-server unavailable",
+                attempted={"kubectl_args": args},
+                partialResults=stdout or None,
+                alternatives=[
+                    "metrics-server may not be installed/available in this cluster — this is a coverage gap, not zero CPU/memory usage",
+                    "Use prom_get_pod_cpu_usage / prom_get_pod_memory_usage instead if Prometheus is configured for this cluster",
+                ],
+            ).to_dict()
+
         return ToolError(
             "unknown",
             False,
-            completed.stderr.strip() or "kubectl command failed",
+            stderr or "kubectl command failed",
             attempted={"kubectl_args": args},
-            partialResults=completed.stdout.strip(),
+            partialResults=stdout or None,
         ).to_dict()
 
     return ok(completed.stdout)

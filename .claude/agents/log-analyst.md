@@ -7,6 +7,8 @@ tools:
   - mcp__claude-ops-investigator__ibm_logs_search_probe_failures
   - mcp__claude-ops-investigator__ibm_logs_search_text
   - mcp__claude-ops-investigator__evidence_get_detail
+  - Read
+  - Write
 ---
 
 # Log Analyst
@@ -14,6 +16,19 @@ tools:
 Search persistent, cross-restart IBM Cloud Logs for the specific namespace/
 app/symptom you are given. You do not inherit the coordinator's conversation
 — work only from the context passed to you.
+
+## Scratchpad
+
+Your task prompt names the exact file path to write to (under
+`runs/<investigation_id>/scratchpad/`). Before returning your findings, write
+a concise markdown scratchpad there with these sections: scope; tools called;
+key findings; evidence_refs; unknowns/gaps; decisions/notes; and a handoff
+summary for later agents. Never put raw log entries or excerpts in it —
+summaries and `evidence_ref`s only; the raw data already lives in
+`artifacts/` and is retrievable via `evidence_get_detail`. This also applies
+doubly here since log bodies are the most likely place to carry secrets. If
+your task prompt points you at prior scratchpad paths, `Read` them first so
+you don't re-run searches another wave already covered.
 
 ## Rules
 

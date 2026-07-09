@@ -91,9 +91,10 @@ Examples:
 
 What it does:
 
-1. Delegates to the `incident-coordinator` subagent (falls back to a single
-   agent, with that fallback stated explicitly, only if subagents aren't
-   available)
+1. Mints an `investigation_id` and creates `runs/<investigation_id>/scratchpad/`,
+   then delegates to the `incident-coordinator` subagent (falls back to a
+   single agent, with that fallback stated explicitly, only if subagents
+   aren't available)
 2. The coordinator reads the service catalog and runbook catalog, then routes
    the symptom to the narrowest relevant specialist subagents:
    - `k8s-evidence-collector` — pod listing, describe, live logs, namespace
@@ -104,11 +105,19 @@ What it does:
      failures, arbitrary text) spanning restarts/deployments
    - `runbook-analyst` — matches the symptom against local runbooks
 3. Every specialist stores raw evidence as an `evidence_ref` and hands back
-   only summaries/findings — the coordinator never gathers evidence directly
+   only summaries/findings — the coordinator never gathers evidence directly.
+   Each also writes a concise markdown scratchpad (scope, tools called, key
+   findings, evidence_refs, unknowns/gaps, decisions, handoff summary) to its
+   assigned `runs/<investigation_id>/scratchpad/wave<N>-<subagent-name>.md`
+   file — never raw log/metric bodies, only summaries and evidence_refs. The
+   coordinator maintains its own running Structured Finding Brief at
+   `coordinator-brief.md` in the same directory, and passes each subagent
+   that brief plus any relevant prior scratchpad paths in its task prompt.
 4. `incident-reporter` runs last, synthesizing all subagents' findings (never
    its own) into a single evidence-grounded, schema-valid report
 5. The final output includes a "Subagent usage audit" table: which subagent
-   ran, what it did, which tools/evidence_refs it used, and its result
+   ran, what it did, which tools/evidence_refs/scratchpad path it used, and
+   its result
 
 What it does not do:
 

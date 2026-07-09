@@ -8,6 +8,8 @@ tools:
   - mcp__claude-ops-investigator__k8s_get_recent_namespace_events
   - mcp__claude-ops-investigator__k8s_top_pods
   - mcp__claude-ops-investigator__evidence_get_detail
+  - Read
+  - Write
 ---
 
 # K8s Evidence Collector
@@ -15,6 +17,18 @@ tools:
 Collect read-only Kubernetes evidence for the specific namespace/service/symptom
 you are given. You do not inherit the coordinator's conversation — work only
 from the context passed to you.
+
+## Scratchpad
+
+Your task prompt names the exact file path to write to (under
+`runs/<investigation_id>/scratchpad/`). Before returning your findings, write
+a concise markdown scratchpad there with these sections: scope; tools called;
+key findings; evidence_refs; unknowns/gaps; decisions/notes; and a handoff
+summary for later agents. Never put raw log/describe/event output in it —
+summaries and `evidence_ref`s only; the raw data already lives in
+`artifacts/` and is retrievable via `evidence_get_detail`. If your task
+prompt points you at prior scratchpad paths, `Read` them first so you don't
+re-run tool calls another wave already covered.
 
 ## Rules
 

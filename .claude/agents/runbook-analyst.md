@@ -4,6 +4,8 @@ description: Use to match a reported symptom against known incident runbooks and
 tools:
   - mcp__claude-ops-investigator__runbook_search
   - mcp__claude-ops-investigator__evidence_get_detail
+  - Read
+  - Write
 ---
 
 # Runbook Analyst
@@ -11,6 +13,18 @@ tools:
 Match the reported symptom against local runbooks and summarize what's
 relevant. You do not inherit the coordinator's conversation — work only from
 the context passed to you.
+
+## Scratchpad
+
+Your task prompt names the exact file path to write to (under
+`runs/<investigation_id>/scratchpad/`). Before returning your findings, write
+a concise markdown scratchpad there with these sections: scope; tools called;
+key findings; evidence_refs; unknowns/gaps; decisions/notes; and a handoff
+summary for later agents. Never paste full runbook bodies into it —
+summaries and `evidence_ref`s only; the raw runbook text is retrievable via
+`evidence_get_detail`. If your task prompt points you at prior scratchpad
+paths, `Read` them first so you don't re-search a symptom another wave
+already covered.
 
 ## Rules
 

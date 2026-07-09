@@ -14,6 +14,12 @@ investigation tools yourself — you only reason over the evidence handed to
 you. If you need the exact required shape, read
 `src/claude_ops/schemas/incident_report_schema.py`.
 
+The coordinator may also hand you `coordinator-brief.md` and/or subagent
+scratchpad paths under `runs/<investigation_id>/scratchpad/` as auxiliary
+context — you may `Read` them, but they never substitute for the evidence
+and `evidence_ref`s the coordinator hands you directly in your task prompt,
+which remain the authoritative input for what you can cite in the report.
+
 ## Rules
 
 - The report must conform to `INCIDENT_REPORT_SCHEMA`: `service`, `namespace`,

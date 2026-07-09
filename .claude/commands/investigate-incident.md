@@ -23,25 +23,34 @@ Examples:
 
 ## Workflow
 
-1. **Use the subagent workflow.** Use `incident-coordinator` as the top-level
+1. **Set up the investigation workspace.** Mint an `investigation_id` as
+   `<namespace>-<service>-<UTC timestamp, YYYYMMDDTHHMMSSZ>` (lowercase,
+   non-alphanumerics in namespace/service replaced with `-`), then create
+   `runs/<investigation_id>/scratchpad/`. This is where the coordinator and
+   subagents persist their scratchpads for this investigation (see
+   `incident-coordinator`'s "Investigation workspace" section). Skip this
+   step only in single-agent fallback (no subagents available).
+2. **Use the subagent workflow.** Use `incident-coordinator` as the top-level
    subagent when available — the main Claude Code conversation must not
-   gather all evidence directly. The coordinator delegates to specialist
-   subagents based on the symptom: `k8s-evidence-collector`,
-   `prometheus-analyst`, `log-analyst`, `runbook-analyst`, and
-   `incident-reporter` last. If subagents are unavailable, explicitly state:
-   "Subagents unavailable; using single-agent fallback." Final output must
-   include a "Subagent usage audit" table with columns: Subagent | Task |
-   Tools used | Evidence refs | Result.
-2. **Restate the symptom.** Echo back namespace, service, symptom, and time window
+   gather all evidence directly. Pass it `investigation_id` (and the
+   scratchpad directory path) alongside namespace/service/symptom/
+   since_minutes. The coordinator delegates to specialist subagents based on
+   the symptom: `k8s-evidence-collector`, `prometheus-analyst`,
+   `log-analyst`, `runbook-analyst`, and `incident-reporter` last. If
+   subagents are unavailable, explicitly state: "Subagents unavailable;
+   using single-agent fallback." Final output must include a "Subagent usage
+   audit" table with columns: Subagent | Task | Tools used | Evidence refs |
+   Scratchpad path | Result.
+3. **Restate the symptom.** Echo back namespace, service, symptom, and time window
    before doing anything else, so the investigation stays scoped to what was
    actually reported.
-3. **Read context first.** Read the `ops://service-catalog` and
+4. **Read context first.** Read the `ops://service-catalog` and
    `ops://runbook-catalog` resources to learn the service's known behavior,
    production risk, and any runbook that already matches this symptom pattern.
-4. **Discover pods for the target service only.** Use `k8s_list_pods` with
+5. **Discover pods for the target service only.** Use `k8s_list_pods` with
    `label_selector="app={service}"` in `{namespace}`. Do not enumerate or
    investigate unrelated services in the namespace.
-5. **Choose tools based on the symptom** — do not run every tool by default.
+6. **Choose tools based on the symptom** — do not run every tool by default.
    Map the symptom to the narrowest relevant set:
    - **OOM / restarts / crash-loop** → `k8s_list_pods`, `k8s_describe_pod`
      (affected pods), `k8s_get_recent_namespace_events`, `k8s_top_pods`;
@@ -72,12 +81,12 @@ Examples:
    - If the symptom doesn't clearly match one of the above, start with
      `runbook_search` on the symptom text and let the result steer which
      tools are needed next.
-6. **Prefer IBM Cloud Logs over live pod logs for historical analysis.**
+7. **Prefer IBM Cloud Logs over live pod logs for historical analysis.**
    `ibm_logs_search*` results survive pod restarts, deployments, and
    scale-downs and span all pod incarnations of the service. Reserve
    `k8s_get_pod_logs` for "what is this specific running pod doing right now"
    checks.
-7. **Prefer typed Prometheus tools over free-form `prom_query_instant`.** Use
+8. **Prefer typed Prometheus tools over free-form `prom_query_instant`.** Use
    `prom_get_pod_restart_increase` / `prom_get_pod_restart_counts` /
    `prom_get_pod_cpu_usage` / `prom_get_pod_memory_usage` /
    `prom_get_http_error_rate` / `prom_get_latency_p95` for anything they
@@ -86,7 +95,7 @@ Examples:
    symptoms, prefer `prom_get_pod_restart_increase(namespace, service,
    since_minutes)` over the incident window; use `prom_get_pod_restart_counts`
    only as supporting context for the current cumulative count.
-8. **Prometheus connectivity is coordinator-owned.** If `prometheus-analyst`
+9. **Prometheus connectivity is coordinator-owned.** If `prometheus-analyst`
    reports Prometheus as unreachable, do not treat metrics as zero.
    `incident-coordinator` may call `prom_ensure_connection` only when the user
    explicitly asked for a Prometheus-backed investigation or when metrics are
@@ -95,20 +104,20 @@ Examples:
    `PROMETHEUS_AUTO_PORT_FORWARD=true`. If it succeeds, delegate back to
    `prometheus-analyst` to retry. If it fails, or auto-port-forward is
    disabled, record Prometheus as an `unknowns` gap.
-9. **Use evidence summaries first.** Tool responses return a compact summary
+10. **Use evidence summaries first.** Tool responses return a compact summary
    plus an `evidence_ref`. Reason from the summary.
-10. **Do not call `evidence_get_detail` unless the summary is insufficient** to
+11. **Do not call `evidence_get_detail` unless the summary is insufficient** to
     confirm or rule out a cause — e.g. the summary is truncated at a point that
     matters, or you need the full stack trace/log body to verify a hypothesis.
-11. **Produce a structured incident report grounded in evidence refs.** Every
+12. **Produce a structured incident report grounded in evidence refs.** Every
     claim must cite the `evidence_ref` it came from. Do not claim a root cause
     without evidence.
-12. **Explicitly list what was ruled out and what remains unknown.** State
+13. **Explicitly list what was ruled out and what remains unknown.** State
     which candidate causes the evidence excludes, and use `unknowns` for
     anything the gathered evidence can't confirm — including missing
     `PROMETHEUS_URL`, `IBM_CLOUD_API_KEY`, or `IBM_LOGS_ENDPOINT` config, or
     an unreachable Prometheus, reported by a tool.
-13. **Read-only only.** Do not use shell commands or raw `kubectl` — only the
+14. **Read-only only.** Do not use shell commands or raw `kubectl` — only the
     narrow, typed MCP tools. Never run or suggest `kubectl delete`, `apply`,
     `patch`, `scale`, `rollout restart`, `helm upgrade`, or `kubectl exec`.
     Mark any production-impacting remediation as `requires_human: true`.

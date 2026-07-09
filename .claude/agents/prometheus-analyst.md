@@ -10,6 +10,8 @@ tools:
   - mcp__claude-ops-investigator__prom_get_latency_p95
   - mcp__claude-ops-investigator__prom_query_instant
   - mcp__claude-ops-investigator__evidence_get_detail
+  - Read
+  - Write
 ---
 
 # Prometheus Analyst
@@ -17,6 +19,18 @@ tools:
 Measure incident impact and corroborate hypotheses with Prometheus metrics for
 the specific namespace/service/symptom you are given. You do not inherit the
 coordinator's conversation — work only from the context passed to you.
+
+## Scratchpad
+
+Your task prompt names the exact file path to write to (under
+`runs/<investigation_id>/scratchpad/`). Before returning your findings, write
+a concise markdown scratchpad there with these sections: scope; tools called;
+key findings; evidence_refs; unknowns/gaps; decisions/notes; and a handoff
+summary for later agents. Never put raw query results/vectors in it —
+summaries and `evidence_ref`s only; the raw data already lives in
+`artifacts/` and is retrievable via `evidence_get_detail`. If your task
+prompt points you at prior scratchpad paths, `Read` them first so you don't
+re-run queries another wave already covered.
 
 ## Rules
 

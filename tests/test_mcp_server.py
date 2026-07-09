@@ -38,3 +38,27 @@ def test_mcp_server_lists_all_tools():
     }
 
     assert expected <= tool_names
+
+
+def test_investigate_incident_prompt_is_symptom_driven():
+    import asyncio
+
+    import claude_ops.mcp.server as server
+
+    prompts = asyncio.run(server.mcp.list_prompts())
+    prompt = next(p for p in prompts if p.name == "investigate_incident")
+
+    args_by_name = {a.name: a for a in (prompt.arguments or [])}
+    assert set(args_by_name) == {"namespace", "service", "symptom", "since_minutes"}
+    assert args_by_name["symptom"].required is True
+    assert args_by_name["since_minutes"].required is False
+
+    rendered = asyncio.run(
+        server.mcp.get_prompt(
+            "investigate_incident",
+            {"namespace": "si", "service": "event-data", "symptom": "OOMKilled restarts"},
+        )
+    )
+    text = rendered.messages[0].content.text
+    assert "OOMKilled restarts" in text
+    assert "incident-coordinator" in text

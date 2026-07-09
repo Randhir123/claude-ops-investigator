@@ -232,31 +232,44 @@ Bob uses a single-agent pattern (no subagents), so the workflow is:
 
 ### Scratchpad Management
 
-Bob maintains a single scratchpad at `runs/<investigation_id>/scratchpad.md`:
+Bob maintains investigation state in `runs/<investigation_id>/scratchpad/`:
 
+```
+runs/<investigation_id>/
+├── scratchpad/
+│   ├── coordinator-brief.md      # Investigation progress and findings
+│   └── workflow-audit.md          # Tools called, decisions made
+└── report.md                      # Final incident report
+```
+
+**coordinator-brief.md** tracks investigation progress:
 ```markdown
-# Investigation: si/multi-system-processor - Readiness Probe Failures
+# Investigation Brief: si-multi-system-processor-20260709T084017Z
 
-## Scope
+## Investigation Scope
 - Namespace: si
 - Service: multi-system-processor
 - Symptom: readiness probe failures during recent rollout
 - Time window: last 60 minutes
 
-## Tools Called
-[List of tools with parameters and evidence_refs]
+## Context
+[Service catalog, runbook catalog]
 
-## Key Findings
-[Findings with evidence_refs]
+## Findings
+[Pod discovery, Kubernetes evidence, metrics, logs, runbooks]
 
-## Ruled Out
-[Hypotheses excluded by evidence]
+## Analysis
+[Likely causes, ruled out, unknowns]
+```
 
-## Unknowns
-[Gaps and missing information]
+**workflow-audit.md** logs all tool calls:
+```markdown
+# Workflow Audit: si-multi-system-processor-20260709T084017Z
 
-## Next Steps
-[What to investigate next]
+## Tool Calls (Detailed)
+- Tool name, parameters, status, evidence_ref
+- Key findings from each tool
+- Decisions made based on evidence
 ```
 
 See `.bob/rules-ops-investigator/scratchpad-and-briefs.md` for detailed guidance.

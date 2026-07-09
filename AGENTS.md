@@ -231,14 +231,15 @@ prom_query_instant("rate(kube_pod_container_status_restarts_total[5m])")
 **Evidence handling**:
 ```python
 # Tools return compact summary + evidence_ref
+# Full raw data is stored externally in artifacts/
 result = {
     "isError": False,
     "summary": "3 pods restarted in last 60m",
     "evidence_ref": "k8s.pod_describe.20260709T054200Z.abc123",
-    "data": {...}  # Full raw data
+    "artifact_path": "artifacts/k8s.pod_describe.20260709T054200Z.abc123.json"
 }
 
-# Archive raw data
+# Archive raw data to artifacts/ (not returned in conversation)
 store_k8s_tool_result(
     content_type="k8s.pod_describe",
     result=result,

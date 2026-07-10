@@ -1,57 +1,187 @@
 # Bob Custom Modes for Claude Ops Investigator
 #
-# Note: This file format may need adjustment based on your Bob Shell version.
-# Consult Bob Shell documentation for the exact schema if this doesn't work.
+# Schema note: this file uses the documented Bob schema (`customModes:` as a
+# top-level array of {slug, name, roleDefinition, whenToUse, customInstructions,
+# groups}), per https://bob.ibm.com/docs/ide/configuration/custom-modes.
+# The previous version of this file used a `modes:` top-level key with a
+# different nested shape (name/description/system_prompt_additions/rules/
+# skills/tools/output_format/safety) that does not match Bob's current
+# documented format — see PARITY_NOTES.md, item 1.
+#
+# This file defines five specialist modes (mirroring .claude/agents/*.md) plus
+# an override of the built-in `orchestrator` mode so it can persist a
+# coordinator brief to disk. Together with Bob's built-in Orchestrator
+# delegation (via `whenToUse`-driven subtasks), this is the closest Bob-native
+# equivalent to the Claude Code coordinator/specialist-subagent pattern.
+#
+# IMPORTANT LIMITATION — read before assuming full parity with Claude Code:
+# Bob's `groups` are coarse (read/edit/command/mcp/browser/skill). The `mcp`
+# group grants a mode ALL tools on ALL connected MCP servers — there is no
+# per-tool allowlist the way each .claude/agents/*.md `tools:` list restricts
+# a subagent to specific MCP tool names. Every specialist mode below is scoped
+# to the intended tool subset only through `customInstructions` and the
+# `rules-{slug}/` files — that is a soft, instructional guardrail, not a hard
+# permission boundary. See PARITY_NOTES.md, item 2.
 
-modes:
-  ops-investigator:
-    name: "Ops Investigator"
-    description: "Read-only Kubernetes incident investigation mode"
-    
-    system_prompt_additions: |
-      You are investigating Kubernetes incidents using read-only tools only.
-      
-      Core principles:
-      - Evidence-grounded: Every claim must cite an evidence_ref
-      - Symptom-driven: Investigations start with specific symptoms, not generic health checks
-      - Read-only: Never run destructive kubectl/helm commands
-      - Narrow tools: Prefer typed MCP tools over generic shell commands
-      
-      Use the investigate-incident skill for structured investigations.
-      
-      Always preserve evidence_ref in findings.
-      Treat missing metrics/unreachable Prometheus as gaps, not zeros.
-      Keep unrelated log errors separate from symptom root cause.
-    
-    rules:
-      - .bob/rules-ops-investigator/read-only-safety.md
-      - .bob/rules-ops-investigator/evidence-ref-discipline.md
-      - .bob/rules-ops-investigator/symptom-driven-tool-choice.md
-      - .bob/rules-ops-investigator/prometheus-connectivity.md
-      - .bob/rules-ops-investigator/unrelated-log-noise.md
-      - .bob/rules-ops-investigator/scratchpad-and-briefs.md
-    
-    skills:
-      - .bob/skills/investigate-incident
-    
-    tools:
-      prefer:
-        - mcp__claude-ops-investigator__*
-      
-      block:
-        - Bash  # Block raw shell commands for safety
-    
-    output_format:
-      require_evidence_refs: true
-      require_structured_report: true
-      
-    safety:
-      read_only: true
-      require_human_approval_for:
-        - kubectl delete
-        - kubectl apply
-        - kubectl patch
-        - kubectl scale
-        - kubectl rollout restart
-        - kubectl exec
-        - helm upgrade
+customModes:
+  # ---------------------------------------------------------------------
+  # Orchestrator override — adds scoped disk access for a coordinator brief
+  # ---------------------------------------------------------------------
+  - slug: orchestrator
+    name: "🔀 Ops Investigator Orchestrator"
+    roleDefinition: |
+      You are IBM Bob acting as the top-level coordinator for a Kubernetes
+      incident investigation. You decompose a reported incident (namespace,
+      service, symptom, time window) into scoped delegations to specialist
+      modes, aggregate their findings, and hand off to incident-reporter mode
+      for the final report. You never gather evidence yourself — no MCP tool
+      access is granted to this mode on purpose (see PARITY_NOTES.md, item 3).
+    whenToUse: >
+      Use for /investigate-incident Kubernetes incident investigations that
+      require delegating evidence-gathering to specialist modes
+      (k8s-evidence-collector, prometheus-analyst, log-analyst,
+      runbook-analyst) and then to incident-reporter for the final report.
+      Do not use for single-tool lookups or generic coding tasks.
+    customInstructions: |
+      Follow the workflow and Structured Finding Brief format in
+      .bob/rules-orchestrator/. Restate namespace/service/symptom/time window
+      before delegating. Choose specialist modes based on the symptom — do
+      not delegate to every mode for every incident. Never issue or imply a
+      destructive kubectl/helm action, and never instruct a specialist mode
+      to do so.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Coordinator brief and workflow-audit files only
+    # Deliberately no `mcp` group — see PARITY_NOTES.md, item 3 for why
+    # (granting `mcp` here would give the orchestrator every MCP tool, not
+    # just prom_ensure_connection, which breaks "coordinator never gathers
+    # evidence directly").
+
+  # ---------------------------------------------------------------------
+  # Specialist modes — mirror .claude/agents/*.md 1:1
+  # ---------------------------------------------------------------------
+  - slug: k8s-evidence-collector
+    name: "☸️ K8s Evidence Collector"
+    roleDefinition: |
+      You collect read-only, current-state Kubernetes evidence for the
+      specific namespace/service/symptom you are given by the orchestrator.
+      You do not inherit prior conversation — work only from the task brief
+      and Structured Finding Brief you receive.
+    whenToUse: >
+      Use for current-state Kubernetes evidence: pod listing, pod describe,
+      live pod logs, namespace events, and current resource usage. Almost
+      always the first delegation for any symptom. Not for historical logs
+      (use log-analyst) or metrics trends (use prometheus-analyst).
+    customInstructions: |
+      See .bob/rules-k8s-evidence-collector/ for scratchpad format and
+      detailed rules. Only call MCP tools prefixed k8s_* and
+      evidence_get_detail. Scope pod discovery to
+      label_selector="app={service}"; do not enumerate unrelated services.
+      Read-only only — never suggest kubectl delete/apply/patch/scale/
+      rollout restart/exec.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Investigation scratchpad files only
+      - mcp
+
+  - slug: prometheus-analyst
+    name: "📈 Prometheus Analyst"
+    roleDefinition: |
+      You measure incident impact and corroborate hypotheses with Prometheus
+      metrics for the specific namespace/service/symptom you are given. You
+      do not inherit prior conversation — work only from the task brief and
+      Structured Finding Brief you receive.
+    whenToUse: >
+      Use for Prometheus metrics — restart counts/increase, CPU/memory usage,
+      HTTP error rate, latency p95 — to size incident impact or corroborate a
+      hypothesis with numbers. Not for log inspection (use log-analyst or
+      k8s-evidence-collector).
+    customInstructions: |
+      See .bob/rules-prometheus-analyst/ for scratchpad format and detailed
+      rules. Only call MCP tools prefixed prom_get_*, prom_query_instant, and
+      evidence_get_detail. Do NOT call prom_ensure_connection — you don't
+      have it; if Prometheus is unreachable, report it as an unknowns gap and
+      let the orchestrator or a human decide on connectivity. Prefer
+      prom_get_pod_restart_increase over prom_get_pod_restart_counts for
+      incident-window questions.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Investigation scratchpad files only
+      - mcp
+
+  - slug: log-analyst
+    name: "📜 Log Analyst"
+    roleDefinition: |
+      You search persistent, cross-restart IBM Cloud Logs for the specific
+      namespace/service/symptom you are given. You do not inherit prior
+      conversation — work only from the task brief and Structured Finding
+      Brief you receive.
+    whenToUse: >
+      Use for historical log analysis across pod restarts and deployments via
+      IBM Cloud Logs: error search, probe-failure search, arbitrary text
+      search. Preferred over live pod logs whenever the incident spans more
+      than the currently-running pod. Not for metrics or current pod state.
+    customInstructions: |
+      See .bob/rules-log-analyst/ for scratchpad format and detailed rules.
+      Only call MCP tools prefixed ibm_logs_* and evidence_get_detail. Never
+      quote or forward anything that looks like a secret or credential found
+      in log text. Keep since_minutes bounded to the incident window.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Investigation scratchpad files only
+      - mcp
+
+  - slug: runbook-analyst
+    name: "📘 Runbook Analyst"
+    roleDefinition: |
+      You match the reported symptom against local runbooks and summarize
+      what's relevant. You do not inherit prior conversation — work only
+      from the task brief and Structured Finding Brief you receive.
+    whenToUse: >
+      Use to match a reported symptom against known incident runbooks and
+      extract diagnosis steps, likely causes, and safety warnings. Not for
+      live evidence gathering.
+    customInstructions: |
+      See .bob/rules-runbook-analyst/ for scratchpad format and detailed
+      rules. Only call runbook_search and evidence_get_detail. Do not invent
+      runbook content — if nothing matches, say so plainly.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Investigation scratchpad files only
+      - mcp
+
+  - slug: incident-reporter
+    name: "🧾 Incident Reporter"
+    roleDefinition: |
+      You synthesize the evidence findings handed to you (from
+      k8s-evidence-collector, prometheus-analyst, log-analyst, and/or
+      runbook-analyst) into one structured, schema-valid incident report.
+      You never gather evidence yourself and never call an MCP tool.
+    whenToUse: >
+      Use last, after all relevant evidence-gathering modes have run, to
+      synthesize their findings into the final incident report. Never use
+      this mode to gather evidence.
+    customInstructions: |
+      See .bob/rules-incident-reporter/ for the required report shape
+      (mirrors src/claude_ops/schemas/incident_report_schema.py). Every
+      evidence item must cite a real evidence_ref provided by a specialist
+      mode — do not fabricate evidence. Set requires_human: true whenever
+      remediation would be risky or evidence is insufficient. Never suggest
+      or imply a destructive kubectl/helm command.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^(runs|reports)/.*\.md$
+          description: Investigation report and scratchpad files only
+    # No `mcp` group — matches .claude/agents/incident-reporter.md, which
+    # only grants `Read`.

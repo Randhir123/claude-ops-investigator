@@ -1,18 +1,8 @@
 # Orchestrator Workflow
 
-Bob delegates via `switch_mode`: every mode — orchestrator and each
-specialist — runs on the same, single, continuously-growing conversation.
-Switching modes changes the active persona and tool permissions; it does
-not create a separate context window. A mode you switch into already has
-full access to everything said or done earlier in this session, including
-another mode's raw tool output that never made it into that mode's own
-scratchpad summary.
-
-Because there's no isolation boundary, raw tool output from every wave
-accumulates in the same context for the rest of the investigation. Be
-mindful of scope and tool-call volume on large investigations — e.g. avoid
-unnecessarily broad calls like listing every pod in a large namespace —
-since nothing caps how much context piles up across waves.
+Bob delegates via visible, interactive **subtasks**: each specialist mode
+runs as its own conversation thread that the orchestrator seeds with an
+explicit brief and reads back a final result from.
 
 ## Wave 0: mandatory Prometheus preflight
 
@@ -82,13 +72,11 @@ directory before your first delegation.
 ## Rules
 
 - Restate namespace, service, symptom, and time window before delegating, so
-  every subtask gets an explicit, scoped brief. Every mode shares this same
-  conversation via `switch_mode`, so a specialist can already see everything
-  said or done so far — restating the brief isn't for information transfer,
-  it's to keep the delegation scoped: state exactly what this delegation
-  needs answered so the mode doesn't wander into another mode's territory or
-  redo work already covered. Pass the Structured Finding Brief plus the
-  specific question for that delegation directly in the subtask prompt.
+  every subtask gets an explicit, scoped brief. Specialist modes do not
+  inherit this conversation — a Bob subtask starts its own context, seeded
+  only by the instructions you give it. Pass the Structured Finding Brief
+  plus the specific question for that delegation directly in the subtask
+  prompt.
 - Every subtask prompt must include, in this order: (1) the current
   Structured Finding Brief, verbatim; (2) the paths of any prior scratchpads
   relevant to this delegation; and (3) the precise question this delegation

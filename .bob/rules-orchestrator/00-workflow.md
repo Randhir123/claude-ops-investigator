@@ -1,14 +1,30 @@
 # Orchestrator Workflow
 
-Adapted from `.claude/agents/incident-coordinator.md`. The mechanism differs
-(Bob delegates via visible, interactive **subtasks**; Claude Code delegates
-via silent, isolated **subagents** — see PARITY_NOTES.md, item 4) but the
-investigation shape is the same.
+Bob delegates via visible, interactive **subtasks**: each specialist mode
+runs as its own conversation thread that the orchestrator seeds with an
+explicit brief and reads back a final result from.
+
+## Wave 0: mandatory Prometheus preflight
+
+Before any other delegation, delegate a subtask to **prometheus-analyst**
+instructed to call only `prom_ensure_connection` and report back
+reachable/unreachable — no metrics, no other tool calls. Write its result to
+`runs/<investigation_id>/scratchpad/wave0-prometheus-preflight.md`.
+
+- If reachable: proceed to the rest of the workflow below.
+- If unreachable: **stop the investigation immediately.** Do not delegate to
+  any other specialist mode, do not produce a report (partial or otherwise),
+  and do not record this as an `unknowns` gap to work around. Tell the user
+  plainly that Prometheus connectivity is required before an investigation
+  can run, and that the investigation was aborted at the preflight step. See
+  `.bob/rules-ops-investigator/prometheus-connectivity.md` for the full gate
+  rules.
 
 ## Subtask routing
 
-Delegate to specialist modes as subtasks, choosing based on the reported
-symptom — do not invoke every mode for every incident:
+Once preflight has passed, delegate to specialist modes as subtasks,
+choosing based on the reported symptom — do not invoke every mode for every
+incident:
 
 - **k8s-evidence-collector** — pod listing, pod describe, live pod logs,
   namespace events, current resource usage. Start here for any symptom.
@@ -39,9 +55,9 @@ directory before your first delegation.
   Structured Finding Brief (see `01-structured-finding-brief.md`). Write it
   with the `edit` tool after folding in each subtask's findings, before
   starting the next one — overwrite the file each time; it reflects current
-  state, not a per-wave log. This mode is deliberately granted `edit`
-  scoped to `runs/**/*.md` for exactly this purpose (see PARITY_NOTES.md,
-  item 3 — the built-in Orchestrator mode has zero tool access by default).
+  state, not a per-wave log. This mode is deliberately granted `edit` scoped
+  to `runs/**/*.md` for exactly this purpose, since it has no other way to
+  persist state between delegations.
 - **Give each subtask an explicit scratchpad path to write to**, following
   the convention `runs/<investigation_id>/scratchpad/wave<N>-<mode-slug>.md`
   (e.g. `wave1-k8s-evidence-collector.md`, `wave2-prometheus-analyst.md`).
@@ -78,12 +94,13 @@ directory before your first delegation.
   the brief's unknowns/gaps rather than picking one account — let
   incident-reporter capture it under `unknowns`.
 
-## Prometheus connectivity — known gap vs. Claude Code
+## Prometheus connectivity
 
-The Claude Code coordinator has a scoped `prom_ensure_connection` tool and
-can retry a metric query after re-establishing connectivity. This
-Orchestrator mode intentionally has **no MCP tool access at all** (see
-PARITY_NOTES.md, item 3), so it cannot call `prom_ensure_connection` itself.
-If `prometheus-analyst` reports Prometheus unreachable, record it as an
-`unknowns` gap and surface it to the user — do not attempt connectivity
-recovery from this mode, and do not treat missing metrics as zero.
+This mode has **no MCP tool access at all**, so it never calls
+`prom_ensure_connection` itself — the mandatory wave 0 preflight (above)
+delegates that call to prometheus-analyst instead. A wave 0 failure is a
+hard stop for the whole investigation, not an `unknowns` gap to route
+around; see `.bob/rules-ops-investigator/prometheus-connectivity.md`. Once
+preflight has passed, an isolated transient failure on a later metrics call
+is handled by prometheus-analyst's own one-shot retry and, if still failing,
+recorded as an `unknowns` gap for that specific metric only.

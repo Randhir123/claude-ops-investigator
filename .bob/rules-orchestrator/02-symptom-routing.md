@@ -1,8 +1,8 @@
 # Symptom-to-Mode Routing
 
-Ported from `.claude/commands/investigate-incident.md`. Choose the narrowest
-relevant set of specialist modes for the reported symptom — do not run every
-mode by default.
+Choose the narrowest relevant set of specialist modes for the reported
+symptom — do not run every mode by default. This routing applies after the
+mandatory wave 0 Prometheus preflight (see `00-workflow.md`) has passed.
 
 - **OOM / restarts / crash-loop** → k8s-evidence-collector (pod list,
   describe affected pods, namespace events, top pods), then

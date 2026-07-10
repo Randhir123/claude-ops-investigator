@@ -26,7 +26,6 @@ Never run or suggest:
 - Do not use raw `kubectl`, `helm`, or shell commands
 - All investigation tools are read-only by design
 - Application-level gate: `src/claude_ops/hooks.py::validate_kubectl_verb`
-- Harness-level gate: `.claude/hooks/block_unsafe_shell.py` (Claude Code only)
 
 ## Remediation
 

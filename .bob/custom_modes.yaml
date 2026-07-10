@@ -1,27 +1,24 @@
 # Bob Custom Modes for Claude Ops Investigator
 #
-# Schema note: this file uses the documented Bob schema (`customModes:` as a
-# top-level array of {slug, name, roleDefinition, whenToUse, customInstructions,
-# groups}), per https://bob.ibm.com/docs/ide/configuration/custom-modes.
-# The previous version of this file used a `modes:` top-level key with a
-# different nested shape (name/description/system_prompt_additions/rules/
-# skills/tools/output_format/safety) that does not match Bob's current
-# documented format — see PARITY_NOTES.md, item 1.
+# Schema: a top-level `customModes:` array of {slug, name, roleDefinition,
+# whenToUse, customInstructions, groups}, per
+# https://bob.ibm.com/docs/ide/configuration/custom-modes.
 #
-# This file defines five specialist modes (mirroring .claude/agents/*.md) plus
-# an override of the built-in `orchestrator` mode so it can persist a
-# coordinator brief to disk. Together with Bob's built-in Orchestrator
-# delegation (via `whenToUse`-driven subtasks), this is the closest Bob-native
-# equivalent to the Claude Code coordinator/specialist-subagent pattern.
+# This file defines five specialist modes plus an override of the built-in
+# `orchestrator` mode so it can persist a coordinator brief to disk. Together
+# with Bob's built-in Orchestrator delegation (via `whenToUse`-driven
+# subtasks), this implements a coordinator/specialist workflow: the
+# orchestrator decomposes a reported incident and routes it to scoped
+# specialist modes, then hands off to incident-reporter for the final report.
 #
-# IMPORTANT LIMITATION — read before assuming full parity with Claude Code:
-# Bob's `groups` are coarse (read/edit/command/mcp/browser/skill). The `mcp`
-# group grants a mode ALL tools on ALL connected MCP servers — there is no
-# per-tool allowlist the way each .claude/agents/*.md `tools:` list restricts
-# a subagent to specific MCP tool names. Every specialist mode below is scoped
-# to the intended tool subset only through `customInstructions` and the
-# `rules-{slug}/` files — that is a soft, instructional guardrail, not a hard
-# permission boundary. See PARITY_NOTES.md, item 2.
+# IMPORTANT LIMITATION: Bob's `groups` are coarse (read/edit/command/mcp/
+# browser/skill). The `mcp` group grants a mode ALL tools on ALL connected
+# MCP servers — there is no per-tool allowlist. Every specialist mode below
+# that needs any MCP tool gets the full claude-ops-investigator tool surface;
+# narrowing a mode to its intended tool subset (e.g. only `prom_get_*` for
+# prometheus-analyst) is enforced purely through `customInstructions` and the
+# `rules-{slug}/` files — a soft, instructional guardrail, not a hard
+# permission boundary. Treat it as binding for yourself regardless.
 
 customModes:
   # ---------------------------------------------------------------------
@@ -35,7 +32,9 @@ customModes:
       service, symptom, time window) into scoped delegations to specialist
       modes, aggregate their findings, and hand off to incident-reporter mode
       for the final report. You never gather evidence yourself — no MCP tool
-      access is granted to this mode on purpose (see PARITY_NOTES.md, item 3).
+      access is granted to this mode on purpose, so all evidence gathering,
+      including the mandatory Prometheus connectivity preflight, happens
+      inside a delegated specialist subtask.
     whenToUse: >
       Use for /investigate-incident Kubernetes incident investigations that
       require delegating evidence-gathering to specialist modes
@@ -44,8 +43,14 @@ customModes:
       Do not use for single-tool lookups or generic coding tasks.
     customInstructions: |
       Follow the workflow and Structured Finding Brief format in
-      .bob/rules-orchestrator/. Restate namespace/service/symptom/time window
-      before delegating. Choose specialist modes based on the symptom — do
+      .bob/rules-orchestrator/. Before any other delegation, run the
+      mandatory wave 0 Prometheus preflight: delegate to prometheus-analyst
+      to call prom_ensure_connection and confirm Prometheus is reachable. If
+      it is not, stop the investigation immediately — do not delegate to any
+      other specialist mode and do not produce a report; tell the user that
+      Prometheus connectivity is required before an investigation can run.
+      Only once preflight succeeds, restate namespace/service/symptom/time
+      window and continue. Choose specialist modes based on the symptom — do
       not delegate to every mode for every incident. Never issue or imply a
       destructive kubectl/helm action, and never instruct a specialist mode
       to do so.
@@ -54,13 +59,12 @@ customModes:
       - - edit
         - fileRegex: ^runs/.*\.md$
           description: Coordinator brief and workflow-audit files only
-    # Deliberately no `mcp` group — see PARITY_NOTES.md, item 3 for why
-    # (granting `mcp` here would give the orchestrator every MCP tool, not
-    # just prom_ensure_connection, which breaks "coordinator never gathers
-    # evidence directly").
+    # Deliberately no `mcp` group: this mode never calls a tool directly,
+    # including the mandatory Prometheus preflight, which it delegates to
+    # prometheus-analyst as wave 0 (see .bob/rules-orchestrator/00-workflow.md).
 
   # ---------------------------------------------------------------------
-  # Specialist modes — mirror .claude/agents/*.md 1:1
+  # Specialist modes — narrow, role-scoped delegation targets
   # ---------------------------------------------------------------------
   - slug: k8s-evidence-collector
     name: "☸️ K8s Evidence Collector"
@@ -102,10 +106,13 @@ customModes:
       k8s-evidence-collector).
     customInstructions: |
       See .bob/rules-prometheus-analyst/ for scratchpad format and detailed
-      rules. Only call MCP tools prefixed prom_get_*, prom_query_instant, and
-      evidence_get_detail. Do NOT call prom_ensure_connection — you don't
-      have it; if Prometheus is unreachable, report it as an unknowns gap and
-      let the orchestrator or a human decide on connectivity. Prefer
+      rules. Only call MCP tools prefixed prom_get_*, prom_query_instant,
+      evidence_get_detail, and prom_ensure_connection. Call
+      prom_ensure_connection when the orchestrator delegates the mandatory
+      wave 0 Prometheus preflight (report reachable/unreachable and stop —
+      do not fetch metrics in that delegation), or as a one-shot recovery
+      retry if a prom_get_*/prom_query_instant call fails with a transient
+      connectivity error in a later wave. Prefer
       prom_get_pod_restart_increase over prom_get_pod_restart_counts for
       incident-window questions.
     groups:
@@ -173,7 +180,7 @@ customModes:
       this mode to gather evidence.
     customInstructions: |
       See .bob/rules-incident-reporter/ for the required report shape
-      (mirrors src/claude_ops/schemas/incident_report_schema.py). Every
+      (conforms to src/claude_ops/schemas/incident_report_schema.py). Every
       evidence item must cite a real evidence_ref provided by a specialist
       mode — do not fabricate evidence. Set requires_human: true whenever
       remediation would be risky or evidence is insufficient. Never suggest
@@ -183,5 +190,5 @@ customModes:
       - - edit
         - fileRegex: ^(runs|reports)/.*\.md$
           description: Investigation report and scratchpad files only
-    # No `mcp` group — matches .claude/agents/incident-reporter.md, which
-    # only grants `Read`.
+    # No `mcp` group: this mode only synthesizes evidence handed to it by
+    # other modes and never calls a tool itself.

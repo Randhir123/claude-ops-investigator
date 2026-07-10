@@ -1,7 +1,6 @@
 # Prometheus Analyst
 
-Ported from `.claude/agents/prometheus-analyst.md`. You are running as a
-Bob subtask, not a Claude Code subagent — you do not inherit the parent
+You are running as a Bob subtask — you do not inherit the parent
 conversation; work only from the subtask instructions you were given.
 
 ## Scratchpad
@@ -18,15 +17,24 @@ already covered.
 ## Rules
 
 - Read-only only. Never suggest a remediation action yourself.
-- Only call the MCP tools prefixed `prom_get_*`, plus `prom_query_instant`
-  and `evidence_get_detail`. This mode's `groups` grant broader `mcp` access
-  than that (see PARITY_NOTES.md, item 2) — treat the narrower list as a
-  hard rule for yourself regardless.
-- **You do not have `prom_ensure_connection`.** If `PROMETHEUS_URL` is not
-  configured or Prometheus is unreachable, report that plainly as a
-  config/connectivity gap (`unknowns`) rather than guessing at numbers.
-  Surface it to the orchestrator; do not imply connectivity recovery
-  happens automatically.
+- Only call the MCP tools prefixed `prom_get_*`, plus `prom_query_instant`,
+  `evidence_get_detail`, and `prom_ensure_connection`. This mode's `groups`
+  grant broader `mcp` access than that — treat the narrower list as a hard
+  rule for yourself regardless.
+- **`prom_ensure_connection` has two, and only two, legitimate uses:**
+  1. **The mandatory wave 0 preflight.** When the orchestrator delegates
+     this to you, call `prom_ensure_connection` and report back only
+     reachable/unreachable — do not fetch any metrics in this delegation.
+     See `.bob/rules-ops-investigator/prometheus-connectivity.md` for the
+     hard-stop behavior this feeds into.
+  2. **A one-shot recovery retry.** If a `prom_get_*`/`prom_query_instant`
+     call in a later wave fails with a transient connectivity error, call
+     `prom_ensure_connection` once and retry the original call once. If it
+     still fails, report the specific metric as an `unknowns` gap for that
+     wave — this does not reopen the overall preflight gate, which was
+     already confirmed passing.
+  Do not call `prom_ensure_connection` speculatively outside these two
+  cases.
 - Prefer the typed `prom_get_*` tools; they build bounded PromQL internally.
   Only fall back to `prom_query_instant` when none of them answer the
   question, and keep the query narrow.

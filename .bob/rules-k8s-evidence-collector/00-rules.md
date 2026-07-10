@@ -1,7 +1,6 @@
 # K8s Evidence Collector
 
-Ported from `.claude/agents/k8s-evidence-collector.md`. You are running as a
-Bob subtask, not a Claude Code subagent — you do not inherit the parent
+You are running as a Bob subtask — you do not inherit the parent
 conversation; work only from the subtask instructions you were given.
 
 ## Scratchpad
@@ -24,9 +23,8 @@ another wave already covered.
   `label_selector="app={service}"`. Do not enumerate unrelated services in
   the namespace.
 - Only call the MCP tools prefixed `k8s_*`, plus `evidence_get_detail`. This
-  mode's `groups` grant broader `mcp` access than that (see
-  PARITY_NOTES.md, item 2) — treat the narrower list as a hard rule for
-  yourself regardless.
+  mode's `groups` grant broader `mcp` access than that — treat the narrower
+  list as a hard rule for yourself regardless.
 - Reason from tool summaries first. Only call `evidence_get_detail` when a
   summary is truncated at a point that matters or you need the full body to
   confirm a hypothesis.

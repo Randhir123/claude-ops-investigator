@@ -6,24 +6,26 @@ Maintain investigation state in structured scratchpads. Never store raw logs or 
 
 ## Scratchpad Structure
 
-For Bob investigations (no subagent architecture):
+For orchestrator-driven investigations (custom modes, the primary path):
+
+```
+runs/<investigation_id>/scratchpad/
+├── coordinator-brief.md                   # Orchestrator's structured finding brief
+├── wave0-prometheus-preflight.md          # Mandatory Prometheus reachability check
+├── wave1-k8s-evidence-collector.md        # K8s evidence gathering
+├── wave2-prometheus-analyst.md            # Metrics analysis
+├── wave3-log-analyst.md                   # Historical log analysis
+├── wave4-runbook-analyst.md               # Runbook matching
+└── wave5-incident-reporter.md             # Final report synthesis
+```
+
+For the single-agent Advanced-mode fallback (`.bob/skills/investigate-incident/`,
+used only when custom modes are unavailable — no wave split):
 
 ```
 runs/<investigation_id>/
 ├── scratchpad.md          # Main investigation scratchpad
 └── evidence-refs.md       # Evidence reference index
-```
-
-For Claude Code investigations (with subagents):
-
-```
-runs/<investigation_id>/scratchpad/
-├── coordinator-brief.md              # Coordinator's structured finding brief
-├── wave1-k8s-evidence-collector.md   # K8s evidence gathering
-├── wave2-prometheus-analyst.md       # Metrics analysis
-├── wave3-log-analyst.md              # Historical log analysis
-├── wave4-runbook-analyst.md          # Runbook matching
-└── wave5-incident-reporter.md        # Final report synthesis
 ```
 
 ## Scratchpad Content Rules
@@ -71,12 +73,14 @@ For coordinator-based investigations, maintain a Structured Finding Brief with:
    - Prevents re-discovery/re-reporting
 
 7. **Next wave plan**
-   - Which tools/subagents to use next
+   - Which specialist modes to delegate to next
    - Why they're needed
 
-## Bob Investigation Pattern
+## Single-Agent Fallback Pattern
 
-Since Bob doesn't use subagents, maintain a single scratchpad:
+In the Advanced-mode fallback (no custom-mode delegation, see
+`.bob/skills/investigate-incident/`), maintain a single scratchpad instead
+of per-wave files:
 
 ```markdown
 # Investigation: si/multi-system-processor - Readiness Probe Failures

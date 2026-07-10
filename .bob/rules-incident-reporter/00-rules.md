@@ -1,7 +1,6 @@
 # Incident Reporter
 
-Ported from `.claude/agents/incident-reporter.md`. You are running as a Bob
-subtask, not a Claude Code subagent — you do not inherit the parent
+You are running as a Bob subtask — you do not inherit the parent
 conversation or call any investigation tool yourself. You only reason over
 the evidence handed to you in your subtask instructions. If you need the
 exact required shape, read `src/claude_ops/schemas/incident_report_schema.py`.
@@ -34,7 +33,6 @@ authoritative input for what you can cite in the report.
   a next step for a human, never as a command to execute.
 - Write the final report to `runs/<investigation_id>/report.md` yourself
   (this mode's `edit` access is scoped to `runs/**/*.md` and
-  `reports/**/*.md` for exactly this purpose) and include a "Subagent usage
-  audit" section — renamed here to "Specialist mode usage audit" — listing
-  each mode that ran, its task, tools/evidence_refs/scratchpad path used,
-  and its result.
+  `reports/**/*.md` for exactly this purpose) and include a "Specialist mode
+  usage audit" section listing each mode that ran, its task,
+  tools/evidence_refs/scratchpad path used, and its result.

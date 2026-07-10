@@ -4,7 +4,9 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
 
-**Claude Ops Investigator** is a context-aware Kubernetes incident investigation assistant built with Claude Code, MCP (Model Context Protocol), and read-only operational tools. It helps engineers investigate production incidents safely by combining live cluster signals, Prometheus metrics, IBM Cloud Logs, runbook knowledge, and structured incident reporting.
+**Claude Ops Investigator** is a context-aware Kubernetes incident investigation assistant. At its core is an MCP (Model Context Protocol) server exposing narrow, read-only investigation tools, resources, and a reusable prompt. It helps engineers investigate production incidents safely by combining live cluster signals, Prometheus metrics, IBM Cloud Logs, runbook knowledge, and structured incident reporting.
+
+The MCP server is usable through multiple, independent agent harnesses layered on top of it — currently `.claude/` and `.bob/`. Neither is "the" default; both talk to the same tool layer and are documented in parallel throughout this file.
 
 ### Core Philosophy
 
@@ -61,19 +63,27 @@ claude-ops-investigator/
 │   │   └── validate_final_report.py
 │   ├── rules/                # Project-specific rules
 │   └── skills/               # Reusable investigation patterns
-├── .bob/                     # Bob Shell harness (skill-based)
+├── .bob/                     # Bob Shell harness (orchestrator/custom-mode-based)
 │   ├── mcp.json              # MCP server configuration
-│   ├── custom_modes.yaml     # Custom mode definitions
-│   ├── skills/               # Investigation skills
-│   │   └── investigate-incident/
-│   │       └── SKILL.md      # Single-agent investigation workflow
-│   └── rules-ops-investigator/  # Operational rules
-│       ├── read-only-safety.md
-│       ├── evidence-ref-discipline.md
-│       ├── symptom-driven-tool-choice.md
-│       ├── prometheus-connectivity.md
-│       ├── unrelated-log-noise.md
-│       └── scratchpad-and-briefs.md
+│   ├── custom_modes.yaml     # Mode definitions: orchestrator + 5 specialist modes
+│   ├── commands/              # Slash commands
+│   │   └── investigate-incident.md
+│   ├── rules-orchestrator/    # Orchestrator mode rules (workflow, brief, routing)
+│   ├── rules-k8s-evidence-collector/
+│   ├── rules-prometheus-analyst/
+│   ├── rules-log-analyst/
+│   ├── rules-runbook-analyst/
+│   ├── rules-incident-reporter/
+│   ├── rules-ops-investigator/  # Shared operational rules
+│   │   ├── read-only-safety.md
+│   │   ├── evidence-ref-discipline.md
+│   │   ├── symptom-driven-tool-choice.md
+│   │   ├── prometheus-connectivity.md
+│   │   ├── unrelated-log-noise.md
+│   │   └── scratchpad-and-briefs.md
+│   └── skills/                # Advanced-mode fallback (single-agent, no delegation)
+│       └── investigate-incident/
+│           └── SKILL.md
 ├── runs/                     # Investigation runs (Bob harness)
 │   └── <investigation_id>/   # Format: namespace-service-YYYYMMDDTHHMMSSZ
 │       ├── scratchpad/
@@ -92,17 +102,25 @@ claude-ops-investigator/
 └── artifacts/                # Evidence storage (gitignored)
 ```
 
-### Subagent Workflow
+### Investigation Workflows
 
-The primary investigation workflow uses a coordinator/specialist pattern:
+Both harnesses implement the same coordinator/specialist shape — a top-level
+role decomposes the incident and delegates to narrowly-scoped specialists,
+then hands off to a final reporting role — using each harness's own
+delegation mechanism.
 
-1. **incident-coordinator**: Top-level orchestrator
+#### Claude Code harness (`.claude/`)
+
+1. **incident-coordinator**: Top-level coordinator subagent
    - Maintains investigation state in `runs/<investigation_id>/scratchpad/`
-   - Delegates to specialists based on symptom
+   - Delegates to specialist subagents based on symptom
    - Aggregates findings into structured brief
    - Never gathers evidence directly
+   - Is the only subagent allowed to call `prom_ensure_connection`, and only
+     when the user explicitly asked for Prometheus-backed investigation or
+     metrics are necessary to answer the symptom
 
-2. **Specialist Subagents**:
+2. **Specialist subagents**:
    - **k8s-evidence-collector**: Pod status, logs, events, resource usage
    - **prometheus-analyst**: Metrics (restarts, CPU, memory, errors, latency)
    - **log-analyst**: Historical IBM Cloud Logs across pod restarts
@@ -112,6 +130,41 @@ The primary investigation workflow uses a coordinator/specialist pattern:
    - Produces schema-valid incident report
    - Cites all evidence refs
    - Lists ruled-out causes and unknowns
+
+See `.claude/agents/incident-coordinator.md` for the full policy.
+
+#### Bob harness (`.bob/`)
+
+1. **orchestrator** (override of Bob's built-in Orchestrator mode): Top-level
+   coordinator
+   - Maintains a Structured Finding Brief on disk at
+     `runs/<investigation_id>/scratchpad/coordinator-brief.md`
+   - Delegates to specialist modes as subtasks based on symptom
+   - Never gathers evidence directly (no `mcp` tool access on purpose)
+   - Runs a **mandatory wave 0 Prometheus preflight** before any other
+     delegation: it delegates to `prometheus-analyst` to call
+     `prom_ensure_connection` and confirm reachability. If Prometheus is
+     unreachable, the investigation stops immediately — no further
+     delegation, no partial report; see
+     `.bob/rules-orchestrator/00-workflow.md` and
+     `.bob/rules-ops-investigator/prometheus-connectivity.md` for the full
+     hard-gate policy
+
+2. **Specialist modes**:
+   - **k8s-evidence-collector**: Pod status, logs, events, resource usage
+   - **prometheus-analyst**: Metrics (restarts, CPU, memory, errors,
+     latency); also owns the wave 0 preflight call
+   - **log-analyst**: Historical IBM Cloud Logs across pod restarts
+   - **runbook-analyst**: Match symptoms to known incident patterns
+
+3. **incident-reporter**: Final synthesis
+   - Produces schema-valid incident report
+   - Cites all evidence refs
+   - Lists ruled-out causes and unknowns
+
+Entry point: `.bob/commands/investigate-incident.md`. A single-agent
+Advanced-mode fallback (`.bob/skills/investigate-incident/`) exists for Bob
+installations without custom-mode support.
 
 ### Evidence Model
 
@@ -177,6 +230,14 @@ python -m claude_ops.main investigate \
 /investigate-incident namespace=si service=event-data symptom="readiness probe failures during recent rollout" since_minutes=60
 ```
 
+**Bob Shell Mode** (interactive with orchestrator/custom modes):
+```
+/investigate-incident namespace=si service=event-data symptom="readiness probe failures during recent rollout" since_minutes=60
+```
+(This is `.bob/commands/investigate-incident.md` — distinct from the MCP
+server's `investigate_incident` prompt, which any MCP client can also call
+directly.)
+
 ### Testing
 
 ```bash
@@ -200,7 +261,7 @@ python scripts/mcp_smoke_client.py
 python -m claude_ops.mcp.server
 ```
 
-**Claude Code integration**: The `.mcp.json` file in project root configures Claude Code to launch the server automatically over STDIO.
+**Harness integration**: Each harness has its own MCP server config that launches the server automatically over STDIO — the project-root `.mcp.json` for the Claude Code harness, `.bob/mcp.json` for the Bob harness.
 
 ## Development Conventions
 
@@ -304,7 +365,7 @@ def k8s_get_pod_status(namespace: str, pod_name: str) -> str:
     return _json(store_k8s_tool_result(...))
 ```
 
-### Subagent Development
+### Subagent Development (Claude Code harness)
 
 When creating or modifying subagents in `.claude/agents/`:
 
@@ -312,6 +373,25 @@ When creating or modifying subagents in `.claude/agents/`:
 2. **No context inheritance**: Pass all needed context explicitly via task prompt
 3. **Structured Finding Brief**: Include in every delegation
 4. **Scratchpad discipline**: Write findings to assigned path, never raw logs
+5. **Evidence preservation**: Always cite `evidence_ref` in findings
+
+### Custom Mode Development (Bob harness)
+
+When creating or modifying modes in `.bob/custom_modes.yaml` and their
+matching `.bob/rules-{slug}/` directories:
+
+1. **Scope clearly**: Each mode has a narrow, well-defined responsibility;
+   `groups` in `custom_modes.yaml` sets its coarse read/edit/mcp access, and
+   `rules-{slug}/00-rules.md` narrows it further by instruction (Bob's `mcp`
+   group has no per-tool allowlist, so the narrower list is a soft rule you
+   must still enforce for yourself)
+2. **No context inheritance**: A Bob subtask doesn't inherit the parent
+   conversation — pass all needed context explicitly via the subtask prompt
+3. **Structured Finding Brief**: Include in every delegation (see
+   `.bob/rules-orchestrator/01-structured-finding-brief.md`)
+4. **Scratchpad discipline**: Write findings to the assigned
+   `runs/<investigation_id>/scratchpad/wave<N>-<mode-slug>.md` path, never
+   raw logs
 5. **Evidence preservation**: Always cite `evidence_ref` in findings
 
 ### Hook Development
@@ -344,10 +424,21 @@ Hooks in `.claude/hooks/` are **read-only audit/gate scripts**:
 
 ### Prometheus Connectivity
 
-- **Coordinator-owned**: Only `incident-coordinator` calls `prom_ensure_connection`
-- **Explicit only**: Only when user requested or metrics are necessary
-- **Port-forward**: Only if `PROMETHEUS_AUTO_PORT_FORWARD=true`
-- **Gaps not zeros**: Unreachable Prometheus is an `unknown`, not "no metrics"
+The shared principle both harnesses agree on: **gaps are gaps, never zeros,
+never silently skipped.** Unreachable or unconfigured Prometheus must be
+reported as a gap/unknown, never treated as "no metrics" or a healthy
+service. `prom_ensure_connection` may start a `kubectl port-forward` only if
+`PROMETHEUS_AUTO_PORT_FORWARD=true`.
+
+Each harness enforces *who* may call `prom_ensure_connection`, and *when*,
+its own way:
+
+- **Claude Code harness**: soft/instructional — see
+  `.claude/agents/incident-coordinator.md` for the exact policy.
+- **Bob harness**: a hard, non-bypassable gate — see
+  `.bob/rules-orchestrator/00-workflow.md` and
+  `.bob/rules-ops-investigator/prometheus-connectivity.md` for the wave-0
+  preflight policy.
 
 ## Common Pitfalls
 
@@ -428,6 +519,10 @@ All investigations must produce a report matching `INCIDENT_REPORT_SCHEMA`:
 - **CLAUDE.md**: Claude Code project instructions (if exists)
 - **.claude/agents/**: Subagent definitions and responsibilities
 - **.claude/commands/**: Slash command specifications
+- **.bob/custom_modes.yaml**: Orchestrator and specialist mode definitions
+- **.bob/rules-{slug}/**: Per-mode rules, plus shared rules in
+  `.bob/rules-ops-investigator/`
+- **.bob/commands/**: Slash command specifications
 - **data/runbooks/**: Known incident patterns and remediation steps
 - **tests/**: Test suite with examples of tool usage
 
@@ -435,5 +530,8 @@ All investigations must produce a report matching `INCIDENT_REPORT_SCHEMA`:
 
 - **Tool documentation**: See docstrings in `src/claude_ops/mcp/server.py`
 - **Subagent specs**: Read `.claude/agents/<subagent-name>.md`
-- **Safety rules**: Review `.claude/hooks/` and `src/claude_ops/hooks.py`
+- **Custom mode specs**: Read `.bob/custom_modes.yaml` and
+  `.bob/rules-<slug>/`
+- **Safety rules**: Review `.claude/hooks/`, `.bob/rules-ops-investigator/`,
+  and `src/claude_ops/hooks.py`
 - **Examples**: Check `tests/` for tool usage patterns

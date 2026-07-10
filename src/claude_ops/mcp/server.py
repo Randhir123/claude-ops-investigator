@@ -4,7 +4,8 @@ Run locally over STDIO:
 
     python -m claude_ops.mcp.server
 
-Then connect Claude Code using `.mcp.json`.
+Then connect an MCP client using that client's MCP server configuration
+(e.g. `.mcp.json`).
 
 This exposes:
 - resources: runbook catalog and service catalog
@@ -465,18 +466,19 @@ def prom_get_latency_p95(namespace: str, service: str, since_minutes: int = 60) 
 
 @mcp.tool()
 def prom_ensure_connection() -> str:
-    """Coordinator-owned Prometheus connectivity preflight/setup.
+    """Prometheus connectivity preflight/setup — reserved for your harness's
+    designated entry point for this, not for general use.
 
     No parameters. Checks Prometheus reachability at `PROMETHEUS_URL` first.
 
-    In the Claude Code subagent architecture this tool is reserved for
-    `incident-coordinator` and is called only when the user explicitly asked
-    for a Prometheus-backed investigation, or metrics are necessary to
-    answer the symptom — never automatically, and never by the
-    `prom_get_*`/`prom_query_instant` tools themselves, which report
-    unreachability as a structured gap instead of calling this. After a
-    successful call, retry the metric query via the relevant `prom_get_*`
-    tool.
+    Each MCP client harness decides who is allowed to call this tool and
+    when — e.g. only a top-level coordinating role, and only when the user
+    explicitly asked for a Prometheus-backed investigation or metrics are
+    necessary to answer the symptom. Never call this automatically, and it
+    is never called by the `prom_get_*`/`prom_query_instant` tools
+    themselves, which report unreachability as a structured gap instead of
+    calling this. After a successful call, retry the metric query via the
+    relevant `prom_get_*` tool.
 
     Side effects: this is the **only** tool in this project that may start
     a `kubectl port-forward` subprocess, and only if
@@ -660,14 +662,13 @@ def investigate_incident(namespace: str, service: str, symptom: str, since_minut
       symptom, not a generic service health check.
     - `since_minutes`: the time window to investigate (default 60).
 
-    In Claude Code, this mirrors `/investigate-incident` and should route
-    through the `incident-coordinator` subagent (which delegates to
-    `k8s-evidence-collector`, `prometheus-analyst`, `log-analyst`,
-    `runbook-analyst`, and finally `incident-reporter`) rather than one
-    agent calling every tool itself. For a generic MCP client without
-    subagents, the returned prompt text below describes the same evidence-
-    grounded, `evidence_ref`-preserving, read-only workflow and safety rules
-    to follow directly.
+    If your MCP client provides its own dedicated, project-level command for
+    this investigation (for example a slash command that delegates to
+    specialized sub-agents or modes), prefer that instead of calling this
+    prompt directly — check your client's command list first. Otherwise,
+    the returned prompt text below describes the same evidence-grounded,
+    `evidence_ref`-preserving, read-only workflow and safety rules to follow
+    directly.
     """
     return f"""Investigate a specific reported Kubernetes incident symptom using only
 read-only tools.
@@ -677,12 +678,11 @@ Service: {service}
 Symptom: {symptom}
 Time window: last {since_minutes} minutes
 
-If using Claude Code with subagents available, delegate this investigation
-to the `incident-coordinator` subagent rather than gathering all evidence
-directly; it fans out to `k8s-evidence-collector`, `prometheus-analyst`,
-`log-analyst`, and `runbook-analyst` as the symptom warrants, then hands off
-to `incident-reporter` last. If subagents are unavailable, state that
-explicitly and follow the workflow below directly.
+If your MCP client provides its own dedicated, project-level command for
+this investigation (for example a slash command that delegates to
+specialized sub-agents or modes), prefer that instead of following the
+steps below directly — check your client's command list first. Otherwise,
+follow this workflow directly:
 
 Workflow:
 1. Read ops://service-catalog and ops://runbook-catalog resources.

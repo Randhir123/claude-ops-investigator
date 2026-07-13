@@ -72,11 +72,17 @@ field.
 - If present: `cd` there and confirm it's a git repository with an `origin`
   remote (`git rev-parse --is-inside-work-tree`, `git remote -v`). If it
   isn't, stop and report the same way.
-- Run `git status --porcelain`. **If the working tree is not clean, or
-  there are untracked files that look like in-progress work, stop
-  immediately and report this as a blocker** — "local checkout for
-  `<service>` has uncommitted changes; not touching it." Never stash,
-  reset, clean, or otherwise discard what's there, even temporarily.
+- Run `git status --porcelain`. **Ignore lines starting with `??`
+  (untracked files) — these can't be lost or accidentally committed by
+  branch/commit operations, and real checkouts routinely carry baseline
+  untracked cruft (IDE project files, unstaged .gitignore stubs, log
+  directories) that isn't in-progress work. If any OTHER line is present —
+  modified (`M`), added (`A`), deleted (`D`), renamed (`R`), staged or
+  unstaged — that means a tracked file has uncommitted changes, and you
+  must stop immediately and report this as a blocker** — "local checkout
+  for `<service>` has uncommitted changes to tracked files; not touching
+  it." Never stash, reset, clean, or otherwise discard what's there, even
+  temporarily, and never delete or move aside untracked files either.
 - If clean, `git fetch origin` and confirm you're not already on a
   `bob-fix/*` branch. If you are, that's a sign a prior run didn't finish
   cleanly — stop and report rather than reusing or overwriting it.

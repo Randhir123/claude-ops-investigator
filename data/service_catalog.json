@@ -3,26 +3,23 @@
     {
       "name": "event-data",
       "namespace": "si",
-      "labels": {
-        "app": "event-data"
-      },
-      "risk": "production"
+      "labels": { "app": "event-data" },
+      "risk": "production",
+      "source_repo_path": "/Users/randhirkumarsingh/work/eclipse-workspaces/tss-split-1/event-data"
     },
     {
       "name": "time-series-query",
       "namespace": "si",
-      "labels": {
-        "app": "time-series-query"
-      },
-      "risk": "production"
+      "labels": { "app": "time-series-query" },
+      "risk": "production",
+      "source_repo_path": "/Users/randhirkumarsingh/work/eclipse-workspaces/tss-split-1/time-series-query"
     },
     {
       "name": "multi-system-processor",
       "namespace": "si",
-      "labels": {
-        "app": "multi-system-processor"
-      },
-      "risk": "production"
+      "labels": { "app": "multi-system-processor" },
+      "risk": "production",
+      "source_repo_path": "/Users/randhirkumarsingh/work/eclipse-workspaces/tss-split-1/multi-system-processor"
     }
   ]
 }

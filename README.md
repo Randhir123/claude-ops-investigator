@@ -1,6 +1,6 @@
 # Claude Ops Investigator
 
-A context-aware Kubernetes incident investigation assistant built with Claude Code, MCP, live cluster signals, Prometheus, log search, runbooks, evidence memory, and structured incident reports.
+An MCP-based Kubernetes incident investigation tool with two supported agent harnesses — Claude Code and IBM Bob Shell — combining live cluster signals, Prometheus, log search, runbooks, evidence memory, and structured incident reports.
 
 Claude Ops Investigator helps engineers investigate Kubernetes incidents safely by combining read-only operational tools, external evidence storage, compact investigation memory, and human-controlled remediation boundaries.
 
@@ -10,7 +10,7 @@ The goal is not to give an AI unrestricted production access. The goal is to exp
 
 - Narrow MCP-style tools instead of generic `kubectl`
 - Read-only live Kubernetes investigation
-- Claude Code project instructions
+- Per-harness project instructions (CLAUDE.md, AGENTS.md, Bob mode rules)
 - MCP resources, tools, and prompts
 - Skills, slash commands, and scoped project rules
 - Coordinator/subagent-style investigation workflows
@@ -69,7 +69,14 @@ Run tests:
 pytest
 ```
 
-## Claude Code slash command
+## Slash commands
+
+Both harnesses expose the same two capabilities: a read-only investigation
+command, and a separate, autonomous fix-proposal command. These two are
+deliberately kept apart — `/investigate-incident` never triggers a code
+change on its own; only the explicit `/propose-fix` command can do that.
+
+### Claude Code slash commands
 
 The main interactive workflow is the `/investigate-incident` slash command:
 
@@ -127,7 +134,56 @@ What it does not do:
 - Does not run destructive commands
 - Does not fetch raw evidence detail unless needed
 
-### Environment for optional tools
+### Bob Shell slash commands
+
+Bob Shell (`.bob/`) is a parallel harness that talks to the same MCP tool
+layer and exposes the same two commands.
+
+#### `/investigate-incident`
+
+Read-only, same behavior and args as the Claude Code version above:
+
+```
+/investigate-incident namespace=<namespace> service=<service> symptom="<specific symptom>" since_minutes=<minutes>
+```
+
+An orchestrator mode decomposes the incident and delegates to the same four
+specialist roles (`k8s-evidence-collector`, `prometheus-analyst`,
+`log-analyst`, `runbook-analyst`), then hands off to `incident-reporter` for
+a schema-valid, evidence-grounded report — see `.bob/commands/investigate-incident.md`
+and `AGENTS.md` for the full workflow.
+
+#### `/propose-fix`
+
+A separate, autonomous command. It only fires when an incident report traces
+the cause to a named application-code location (an exception class, stack
+trace, or file/function reference — not an infra/operational finding); if
+that gate isn't met, no fix is proposed. When it does fire, it:
+
+- Works only in the target service's own existing local git checkout (looked
+  up from `data/service_catalog.json`) — it never clones a repo.
+- Requires a clean working tree first — any uncommitted changes to tracked
+  files stop it immediately, nothing is stashed or discarded.
+- Opens a **draft-only** PR, with an AI-disclosure line and a human-review
+  checklist in the description. It never opens a non-draft PR.
+
+Args:
+
+```
+/propose-fix namespace=<namespace> service=<service> symptom="<symptom>" since_minutes=<minutes>
+/propose-fix investigation_id=<id>|latest
+```
+
+Optional: `dry_run=true` (locates the code and narrates the proposed fix to
+a scratchpad file without branching, committing, pushing, or opening a PR)
+and `base_branch=<branch>` (defaults to whatever branch is already checked
+out in the local checkout if omitted).
+
+`/investigate-incident` never triggers `/propose-fix` — they are separate
+commands, and a code change only ever happens when `/propose-fix` is run
+explicitly.
+
+## Environment for optional tools
 
 Prometheus:
 - `PROMETHEUS_URL`
@@ -143,7 +199,7 @@ Copy `.env.example` to `.env` and fill in local values. Never commit `.env`.
 The MCP server loads it automatically at startup so these tools have access
 without any secrets going into `.mcp.json`.
 
-### No-token local tests
+## No-token local tests
 
 These exercise the tools and structured error paths without any real
 Prometheus, IBM Cloud, or Kubernetes credentials:

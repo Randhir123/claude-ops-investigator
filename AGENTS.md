@@ -65,15 +65,19 @@ claude-ops-investigator/
 │   └── skills/               # Reusable investigation patterns
 ├── .bob/                     # Bob Shell harness (orchestrator/custom-mode-based)
 │   ├── mcp.json              # MCP server configuration
-│   ├── custom_modes.yaml     # Mode definitions: orchestrator + 5 specialist modes
+│   ├── custom_modes.yaml     # Mode definitions: orchestrator + 5 specialist modes + fix-proposer
 │   ├── commands/              # Slash commands
-│   │   └── investigate-incident.md
+│   │   ├── investigate-incident.md
+│   │   └── propose-fix.md    # Read-only investigation + autonomous fix proposal
 │   ├── rules-orchestrator/    # Orchestrator mode rules (workflow, brief, routing)
+│   │   └── 03-fix-proposal-gate.md  # Gate applied only by /propose-fix
 │   ├── rules-k8s-evidence-collector/
 │   ├── rules-prometheus-analyst/
 │   ├── rules-log-analyst/
 │   ├── rules-runbook-analyst/
 │   ├── rules-incident-reporter/
+│   ├── rules-fix-proposer/    # Fix-proposer mode rules (used only by /propose-fix)
+│   │   └── 00-rules.md
 │   ├── rules-ops-investigator/  # Shared operational rules
 │   │   ├── read-only-safety.md
 │   │   ├── evidence-ref-discipline.md
@@ -162,9 +166,32 @@ See `.claude/agents/incident-coordinator.md` for the full policy.
    - Cites all evidence refs
    - Lists ruled-out causes and unknowns
 
+4. **fix-proposer**: Autonomous fix-proposal mode, invoked only via
+   `/propose-fix` after the fix-proposal gate passes — never part of the
+   default `/investigate-incident` flow. Works only in the target service's
+   own existing local git checkout (never clones), requires a clean working
+   tree, and opens a draft-only PR. See `.bob/rules-fix-proposer/00-rules.md`
+   for the full policy. No Claude Code equivalent exists yet.
+
 Entry point: `.bob/commands/investigate-incident.md`. A single-agent
 Advanced-mode fallback (`.bob/skills/investigate-incident/`) exists for Bob
 installations without custom-mode support.
+
+#### The `/propose-fix` flow
+
+`.bob/commands/propose-fix.md` runs the same investigation as
+`/investigate-incident` (or loads an existing `investigation_id`'s report),
+then applies `.bob/rules-orchestrator/03-fix-proposal-gate.md`: orchestrator
+checks whether at least one `likely_causes` entry cites a named
+application-code location, as opposed to an infra/operational finding. If
+the gate isn't met, the flow stops there — no fix, no PR. If it is met,
+orchestrator delegates once to `fix-proposer`, which locates and verifies
+the service's local checkout (never cloning), confirms a clean working tree,
+locates the implicated code, proposes the smallest defensible fix, then
+branches, commits, pushes, and opens a draft-only PR with an AI-disclosure
+line and human-review checklist. `dry_run=true` stops fix-proposer after it
+narrates the proposed fix to a scratchpad file, with no git/GitHub actions
+taken.
 
 ### Evidence Model
 

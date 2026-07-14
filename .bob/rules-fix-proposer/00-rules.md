@@ -86,6 +86,14 @@ field.
 - If clean, `git fetch origin` and confirm you're not already on a
   `bob-fix/*` branch. If you are, that's a sign a prior run didn't finish
   cleanly — stop and report rather than reusing or overwriting it.
+- Determine the base branch. If your subtask instructions include an
+  explicit `base_branch`, use that — `git fetch origin`, then check it out
+  (creating a local tracking branch from `origin/<base_branch>` first if it
+  doesn't exist locally yet). If no `base_branch` was given, use whatever
+  branch is already checked out (`git branch --show-current`) — do not
+  switch to anything else, and do not assume the repo's remote
+  default/trunk branch. Either way, record the resolved base branch name —
+  this is the base for everything in Step 4.
 
 ## Step 2 — locate the code
 
@@ -108,19 +116,18 @@ and what a human engineer should look at, and clearly note no PR was opened.
 
 ## Step 4 — branch, commit, push, open PR
 
-- Determine the repo's actual default/trunk branch first — do not assume
-  `main` or `master`. Check `git remote show origin` (look for "HEAD
-  branch") or the `branch.<name>.merge` config for the branch currently
-  checked out. Several of this project's real repos use `development` as
-  the trunk, not `main`.
-- Create the branch from that trunk's current `origin` head (after the
-  fetch in Step 1), named `bob-fix/<investigation_id>`.
+- Use the base branch resolved in Step 1 (either the explicit
+  `base_branch` given, or whatever was already checked out) — never the
+  repo's remote default/trunk branch unless that's genuinely what was
+  resolved.
+- Create the branch from that base branch's current local HEAD, named
+  `bob-fix/<investigation_id>`.
 - Commit message: one line summarizing the fix, plus a body citing the
   `evidence_ref`(s) and investigation_id.
-- Push the branch to `origin` (never push directly to the trunk branch
-  identified above, whatever it's named, never force-push).
-- Open the PR with `gh pr create --draft`, base = that same trunk branch.
-  Never open a non-draft PR.
+- Push the branch to `origin` (never push directly to the base branch
+  itself — only ever push the new `bob-fix/*` branch — never force-push).
+- Open the PR with `gh pr create --draft`, base = the resolved base branch
+  from Step 1. Never open a non-draft PR.
 - PR title: `[Bob-proposed fix] <one-line summary> (<investigation_id>)`.
 - PR description must include, in this order:
   1. A bolded line: **"This is an AI-proposed fix from an automated incident

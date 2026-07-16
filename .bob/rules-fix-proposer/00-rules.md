@@ -64,7 +64,7 @@ git write of any kind:
   strings in the plausible area of the symptom. **Time-box this**: a
   handful of targeted greps/reads, not a full codebase walk or general code
   review.
-- Write your findings to `runs/<investigation_id>/code-context-brief.md`
+- Write your findings to `runs/<investigation_id>/scratchpad/code-context-brief.md`
   (your `edit` group already covers `^runs/.*\.md$`, so use it directly
   here rather than shell redirection). Format: file paths, class/function
   names, exception types, and any log/metric strings found nearby —
@@ -164,7 +164,7 @@ validation, a null/bounds check, a corrected condition, added error
 handling — whatever the evidence actually supports. Do not refactor, rename,
 reformat, or touch files the evidence doesn't implicate.
 
-**If `runs/<investigation_id>/code-context-brief.md` exists** from an
+**If `runs/<investigation_id>/scratchpad/code-context-brief.md` exists** from an
 earlier Code Context Brief pass in this same run, read it as a helpful
 starting point — it already narrows which files/classes/functions are
 likely relevant. But treat it only as a head start, not a substitute for

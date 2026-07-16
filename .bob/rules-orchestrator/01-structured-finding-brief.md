@@ -12,7 +12,7 @@ The brief must include these fields, every time:
 - **Investigation scope** — namespace, service, symptom, time window.
 - **Code context brief (optional)** — present only when `/propose-fix`'s
   fresh-investigation Step 2 produced
-  `runs/<investigation_id>/code-context-brief.md`; otherwise "none." When
+  `runs/<investigation_id>/scratchpad/code-context-brief.md`; otherwise "none." When
   present, state its path. This field is vocabulary for specialists
   (exception names, log/metric strings, likely files) — **never a citable
   `evidence_ref` and never evidence in itself.** A finding only prompted by

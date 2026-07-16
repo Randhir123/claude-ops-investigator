@@ -36,7 +36,7 @@ $ARGUMENTS
      only; no branch, commit, push, or write to the source repo of any
      kind. See `.bob/rules-fix-proposer/00-rules.md`'s "Code Context Brief
      mode" section for the full procedure. The subtask writes
-     `runs/<investigation_id>/code-context-brief.md`.
+     `runs/<investigation_id>/scratchpad/code-context-brief.md`.
    - If that file was created, fold its path into the Structured Finding
      Brief (see `.bob/rules-orchestrator/01-structured-finding-brief.md`)
      before wave 0 begins, so it reaches every subsequent specialist

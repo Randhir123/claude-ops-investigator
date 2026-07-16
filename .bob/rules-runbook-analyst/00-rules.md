@@ -29,3 +29,10 @@ wave already covered.
 - Return findings as a list of runbook matches (id, title, relevant excerpt)
   plus the safety warnings they carry. Do not draw incident-level
   conclusions.
+- If the Structured Finding Brief you were handed includes a Code Context
+  Brief path, run your full standard baseline search on the symptom's own
+  words regardless — never let it narrow, skip, or substitute that search.
+  A brief-derived term is an additional search on top of the baseline,
+  never a replacement for it. If you notice you only searched brief-derived
+  terms and skipped the baseline, say so explicitly in your scratchpad
+  rather than silently doing it.

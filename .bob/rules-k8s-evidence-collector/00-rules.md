@@ -34,3 +34,11 @@ another wave already covered.
   job.
 - State explicitly if a tool call returned an error or empty result; do not
   silently drop it.
+- If the Structured Finding Brief you were handed includes a Code Context
+  Brief path, run your full standard baseline sweep for the reported
+  symptom regardless — never let it narrow, skip, or substitute your normal
+  checks. Any brief-derived lead (a specific file, pod behavior, or event
+  reason it points to) is an additional query on top of that sweep, never a
+  replacement for it. If you notice you only ran brief-directed checks and
+  skipped the baseline, say so explicitly in your scratchpad rather than
+  silently doing it.

@@ -46,3 +46,11 @@ already covered.
 - Return findings as a list of evidence items, each citing its
   `evidence_ref`, metric queried, and a one-line takeaway. Do not draw
   incident-level conclusions.
+- If the Structured Finding Brief you were handed includes a Code Context
+  Brief path, run your full standard baseline sweep for the reported
+  symptom regardless — never let it narrow, skip, or substitute your normal
+  metric checks. A brief-derived lead (a specific metric name it surfaces)
+  is an additional query on top of that sweep, never a replacement for it.
+  If you notice you only ran brief-directed queries and skipped the
+  baseline, say so explicitly in your scratchpad rather than silently doing
+  it.

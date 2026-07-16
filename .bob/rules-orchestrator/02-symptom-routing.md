@@ -4,6 +4,13 @@ Choose the narrowest relevant set of specialist modes for the reported
 symptom — do not run every mode by default. This routing applies after the
 mandatory wave 0 Prometheus preflight (see `00-workflow.md`) has passed.
 
+**The steps mapped below are each specialist's baseline sweep.** They run
+in full, every time a mode is delegated to, regardless of whether a Code
+Context Brief is present in the Structured Finding Brief — see
+`00-workflow.md`'s ordering rule. A brief may prompt additional,
+brief-informed queries on top of these steps; it must never cause a
+specialist to skip, narrow, or substitute any of them.
+
 - **OOM / restarts / crash-loop** → k8s-evidence-collector (pod list,
   describe affected pods, namespace events, top pods), then
   prometheus-analyst (`prom_get_pod_memory_usage`,

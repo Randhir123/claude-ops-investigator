@@ -22,6 +22,13 @@ authoritative input for what you can cite in the report.
   evidence.
 - Every `likely_causes` entry must be supported by at least one evidence
   item.
+- When compiling `likely_causes`, `evidence_ref`s that originated from a
+  brief-informed query (one prompted by a Code Context Brief lead, if one
+  was in play) carry no more or less weight than `evidence_ref`s from a
+  specialist's standard baseline sweep — evaluate them on the same footing.
+  The fact that a Code Context Brief suggested a lead must never itself
+  boost a finding's credibility; only the strength of the actual evidence
+  does.
 - Use `ruled_out` for candidate causes the gathered evidence excludes, and
   `unknowns` for anything the evidence can't confirm (including missing
   config like an unset `PROMETHEUS_URL` or `IBM_CLOUD_API_KEY` reported by a

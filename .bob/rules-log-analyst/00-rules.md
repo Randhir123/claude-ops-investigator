@@ -36,3 +36,11 @@ searches another wave already covered.
   `evidence_ref`, the query used, and a one-line takeaway. Never quote or
   forward anything that looks like a secret or credential found in log
   text. Do not draw incident-level conclusions.
+- If the Structured Finding Brief you were handed includes a Code Context
+  Brief path, run your full standard baseline sweep for the reported
+  symptom regardless — never let it narrow, skip, or substitute your normal
+  searches. A brief-derived lead (a specific exception name or log string
+  it surfaces) is an additional query on top of that sweep, never a
+  replacement for it. If you notice you only ran brief-directed searches
+  and skipped the baseline, say so explicitly in your scratchpad rather
+  than silently doing it.

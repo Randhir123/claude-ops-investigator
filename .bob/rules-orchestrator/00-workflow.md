@@ -102,6 +102,20 @@ directory before your first delegation.
   real `k8s_*`/`prom_*`/`ibm_logs_*`/`runbook_search` result; a lead the
   brief suggested but that couldn't be confirmed against real evidence must
   not appear in the report as a finding.
+- **A Code Context Brief must never narrow or replace a specialist's
+  baseline sweep.** Each specialist's standard evidence-gathering steps for
+  the reported symptom — the ones mapped in `02-symptom-routing.md` (pod
+  status/events, restart counts/CPU/memory/error rate/latency, historical
+  log search, runbook match) — run in full, exactly as they would with no
+  Code Context Brief present, every time. When scoping a delegation, never
+  let a brief substitute for or shrink that mode's normal baseline scope.
+  Brief-informed queries (e.g. searching logs for a specific exception
+  string the brief surfaced, or checking a specific metric name) are
+  strictly additional, layered on top of the baseline sweep, never instead
+  of it. If a specialist's findings show it only ran brief-directed
+  searches and skipped its normal baseline checks, that is a rules
+  violation — record it explicitly in the report's `unknowns` field rather
+  than letting it pass silently.
 
 ## Prometheus connectivity
 

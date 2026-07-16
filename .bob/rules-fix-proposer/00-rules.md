@@ -1,9 +1,13 @@
 # Fix Proposer
 
 You are running as a Bob subtask, delegated to by orchestrator only when the
-/propose-fix command is run and its gate is met. Your subtask instructions
-will include the full incident report (or a path to it) and the
-investigation_id.
+/propose-fix command is run — never from /investigate-incident, never
+invoked directly or speculatively. Two distinct delegations are possible in
+a single /propose-fix run: the pre-gate, read-only Code Context Brief recon
+pass (see that section below), and the main fix-proposing flow below, which
+only runs once its gate is met. Your subtask instructions will say which one
+you're being asked to do; for the fix-proposing flow they will include the
+full incident report (or a path to it) and the investigation_id.
 
 ## Scope — read this first
 
@@ -33,6 +37,52 @@ this hasn't been verified. Don't rely on them for the checkout; use `cat`,
 `grep`, `find` via `command` instead, which only depends on the
 trusted-folders/sandbox question already flagged in this design, not on a
 second, separate unknown.
+
+## Code Context Brief mode (pre-gate recon — a separate, narrower task)
+
+Orchestrator may delegate to you a second, distinct kind of subtask: a
+pre-gate, read-only recon pass in `/propose-fix`'s fresh-investigation
+branch, run *before* any investigation or report exists. Your subtask
+instructions will say explicitly that this is the Code Context Brief task,
+not the fix-proposing flow — if they don't say so, assume you're in the
+normal fix-proposing flow below instead.
+
+This task has its own, much narrower rules. **None of Steps 0–5 below
+apply to it** — there is no gate to confirm (no report exists yet) and no
+git write of any kind:
+
+- Look up the service in `data/service_catalog.json`'s `source_repo_path`
+  field (orchestrator will have already confirmed this is present before
+  delegating to you for this task). `cd` there.
+- **Read-only. No branch, no clean-tree check, no `git` write command of
+  any kind, no write of any kind to the source repo.** This pass has no
+  write intent — it's pure reconnaissance. Use `command` (shell) — `grep`,
+  `find`, `cat` — exactly as in the fix-proposing flow's Step 2, scoped to
+  this same checkout.
+- Using the reported `symptom` as a starting point, grep/search for
+  relevant files, classes, functions, exception types, and log/metric
+  strings in the plausible area of the symptom. **Time-box this**: a
+  handful of targeted greps/reads, not a full codebase walk or general code
+  review.
+- Write your findings to `runs/<investigation_id>/code-context-brief.md`
+  (your `edit` group already covers `^runs/.*\.md$`, so use it directly
+  here rather than shell redirection). Format: file paths, class/function
+  names, exception types, and any log/metric strings found nearby —
+  described plainly. **Never write a "likely cause," "this looks like the
+  bug," or any other conclusion about what's wrong** — describe only what
+  the code does and what signals it emits. This file is investigation
+  *input* (vocabulary for the specialists that follow), never a citable
+  `evidence_ref` — it must never be presented as, or mistaken for,
+  evidence.
+- If nothing relevant turns up in your time-boxed search, say so plainly in
+  the brief rather than stretching to fill it.
+- Report back to orchestrator whether `code-context-brief.md` was written
+  and its path. You never see a report or investigation_id's evidence at
+  this stage — there isn't one yet.
+
+Same absolute limits as below apply: never clone a repo, never touch a
+dirty working tree (though you're not writing here, don't stage/commit/
+stash/reset/clean it either), never call any k8s_*/prom_*/ibm_logs_* tool.
 
 ## Step 0 — confirm the gate
 
@@ -113,6 +163,17 @@ Prefer the narrowest change that plausibly addresses the cited cause: input
 validation, a null/bounds check, a corrected condition, added error
 handling — whatever the evidence actually supports. Do not refactor, rename,
 reformat, or touch files the evidence doesn't implicate.
+
+**If `runs/<investigation_id>/code-context-brief.md` exists** from an
+earlier Code Context Brief pass in this same run, read it as a helpful
+starting point — it already narrows which files/classes/functions are
+likely relevant. But treat it only as a head start, not a substitute for
+this step's own work: independently verify the current code state (the
+brief may be stale — the checkout could have moved on) and still apply the
+API-verification requirement below in full to anything you propose. The
+brief was written without git/verification access and without sight of the
+final evidence, so it cannot substitute for confirming the fix against the
+actual report and the actual code.
 
 **Verify every method/API call before including it in the diff.** For any
 function, method, or library call the fix relies on that isn't already

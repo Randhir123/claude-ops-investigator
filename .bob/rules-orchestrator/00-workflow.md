@@ -93,6 +93,15 @@ directory before your first delegation.
 - If specialists disagree or evidence is inconsistent, say so explicitly in
   the brief's unknowns/gaps rather than picking one account — let
   incident-reporter capture it under `unknowns`.
+- If the Structured Finding Brief carries a "Code context brief" path
+  (only possible via `/propose-fix`'s fresh-investigation Step 2 — see
+  `01-structured-finding-brief.md`), specialists — especially log-analyst
+  and prometheus-analyst — may read it for vocabulary: specific exception
+  names, log strings, metric names to search for. It is never a citable
+  `evidence_ref`. Every `likely_causes` claim must still trace back to a
+  real `k8s_*`/`prom_*`/`ibm_logs_*`/`runbook_search` result; a lead the
+  brief suggested but that couldn't be confirmed against real evidence must
+  not appear in the report as a finding.
 
 ## Prometheus connectivity
 

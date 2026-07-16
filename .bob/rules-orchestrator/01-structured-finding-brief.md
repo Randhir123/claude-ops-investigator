@@ -10,6 +10,14 @@ question, is the entirety of what it knows about the investigation so far.
 The brief must include these fields, every time:
 
 - **Investigation scope** — namespace, service, symptom, time window.
+- **Code context brief (optional)** — present only when `/propose-fix`'s
+  fresh-investigation Step 2 produced
+  `runs/<investigation_id>/code-context-brief.md`; otherwise "none." When
+  present, state its path. This field is vocabulary for specialists
+  (exception names, log/metric strings, likely files) — **never a citable
+  `evidence_ref` and never evidence in itself.** A finding only prompted by
+  this brief that couldn't be confirmed against a real `k8s_*`/`prom_*`/
+  `ibm_logs_*`/`runbook_search` result must not appear in the report.
 - **Current working status** — one line on where the investigation stands
   (e.g. "symptom not yet confirmed against this service").
 - **Confirmed evidence** — findings established so far, each with its

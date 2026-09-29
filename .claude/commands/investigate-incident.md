@@ -36,7 +36,9 @@ Examples:
    scratchpad directory path) alongside namespace/service/symptom/
    since_minutes. The coordinator delegates to specialist subagents based on
    the symptom: `k8s-evidence-collector`, `prometheus-analyst`,
-   `log-analyst`, `runbook-analyst`, and `incident-reporter` last. If
+   `log-analyst`, `jvm-analyst` (for GC-/heap-/memory-/OOM-flavored symptoms
+   on JVM services, via the separate `jvm-troubleshooter` MCP server),
+   `runbook-analyst`, and `incident-reporter` last. If
    subagents are unavailable, explicitly state: "Subagents unavailable;
    using single-agent fallback." Final output must include a "Subagent usage
    audit" table with columns: Subagent | Task | Tools used | Evidence refs |
@@ -59,7 +61,21 @@ Examples:
      metrics over the incident window — use `prom_get_pod_restart_counts` only
      as supporting context for the current cumulative count; `k8s_get_pod_logs`
      for the current pod, and `ibm_logs_search_errors` if the incident spans
-     earlier pod incarnations.
+     earlier pod incarnations. If the service is a JVM (OpenJ9/IBM Semeru)
+     workload and pod-level evidence doesn't explain *why* the OOM happened,
+     delegate to `jvm-analyst` for `get_heap_status`/`get_native_memory_summary`
+     to check whether it was heap-driven or native-memory-driven.
+   - **GC pause / throughput / heap pressure alert (JVM services only)** →
+     `jvm-analyst`, calling the separate `jvm-troubleshooter` MCP server's
+     `get_jvm_incident_snapshot` for a first-look read, then
+     `get_gc_pause_stats`/`get_gc_throughput`/`get_gc_behavior_over_time` and
+     `get_heap_status`/`get_heap_trend_over_time`/`get_gc_memory_correlation`
+     as the symptom narrows. Findings are archived via
+     `evidence_store_external` so they carry a real `evidence_ref` like every
+     other specialist's. Fall back to `prometheus-analyst` only if pod-level
+     CPU/memory corroboration is also needed, and to
+     `k8s-evidence-collector` if a specific pod or its resource limits need
+     identifying.
    - **Readiness / liveness probe failures** → `k8s_get_recent_namespace_events`,
      `k8s_describe_pod` (affected pods), `runbook_search`;
      `ibm_logs_search_probe_failures` for historical probe/app errors across

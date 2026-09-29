@@ -122,6 +122,42 @@ customModes:
           description: Investigation scratchpad files only
       - mcp
 
+  - slug: jvm-analyst
+    name: "☕ JVM Analyst"
+    roleDefinition: |
+      You measure OpenJ9/IBM Semeru JVM internals — GC pause/throughput, heap
+      usage, memory-pool/native-memory breakdown, thread count — for the
+      specific namespace/service/symptom you are given, using the separate
+      `jvm-troubleshooter` MCP server. You do not inherit prior conversation —
+      work only from the task brief and Structured Finding Brief you receive.
+    whenToUse: >
+      Use when a symptom is GC-, heap-, memory-pressure-, or OOM-flavored and
+      the affected service is a known JVM (OpenJ9/IBM Semeru) workload, and
+      pod-level evidence alone won't show *why* — e.g. to check whether an
+      OOM was heap-driven or native-memory-driven, or whether GC pressure is
+      climbing. Not for Kubernetes pod state (use k8s-evidence-collector) or
+      historical logs (use log-analyst). Does not run automatically for
+      non-JVM services.
+    customInstructions: |
+      See .bob/rules-jvm-analyst/ for scratchpad format and detailed rules.
+      This mode's `groups` grant access to every tool on every connected MCP
+      server (Bob's `mcp` group has no per-tool allowlist) — treat the
+      following as a hard rule for yourself regardless: only call MCP tools
+      prefixed jvm-troubleshooter's get_*/render_*_chart (GC, heap, memory
+      pool, allocation-rate, leak-indicator, fragmentation, comparative,
+      thread, correlation, incident-snapshot tools), plus
+      claude-ops-investigator's evidence_store_external to archive findings
+      into this investigation's own evidence store — jvm-troubleshooter's
+      tools do not produce an evidence_ref on their own. Never call this
+      server's own k8s_*/prom_*/ibm_logs_* tools from this mode; that's
+      other specialists' scope.
+    groups:
+      - read
+      - - edit
+        - fileRegex: ^runs/.*\.md$
+          description: Investigation scratchpad files only
+      - mcp
+
   - slug: log-analyst
     name: "📜 Log Analyst"
     roleDefinition: |

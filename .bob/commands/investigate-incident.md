@@ -38,9 +38,11 @@ $ARGUMENTS
 6. **Delegate to specialist modes as subtasks**, following the routing in
    `.bob/rules-orchestrator/02-symptom-routing.md`:
    `k8s-evidence-collector`, `prometheus-analyst`, `log-analyst`,
-   `runbook-analyst` as the symptom warrants, then `incident-reporter` last.
-   Maintain and pass the Structured Finding Brief per
-   `.bob/rules-orchestrator/01-structured-finding-brief.md` with every
+   `jvm-analyst` (for GC-/heap-/memory-/OOM-flavored symptoms on JVM
+   services, via the separate `jvm-troubleshooter` MCP server configured in
+   `.bob/mcp.json`), `runbook-analyst` as the symptom warrants, then
+   `incident-reporter` last. Maintain and pass the Structured Finding Brief
+   per `.bob/rules-orchestrator/01-structured-finding-brief.md` with every
    delegation.
 7. **Do not gather evidence directly from `orchestrator` mode.** This mode
    has no `mcp` tool access on purpose — evidence gathering only happens

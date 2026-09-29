@@ -28,6 +28,12 @@ subagents in `.claude/agents/`, not just a convention:
   `runbook-analyst` are the specialist subagents — each scoped to a narrow
   tool subset (see each agent's frontmatter `tools:` list). None of them
   draws incident-level conclusions; that's the coordinator/reporter's job.
+- `jvm-analyst` is a conditional fifth specialist, scoped to the separate
+  `jvm-troubleshooter` MCP server (GC/heap/memory-pool/thread signals for a
+  known OpenJ9/IBM Semeru service). The coordinator only delegates to it when
+  a symptom is GC-, heap-, memory-pressure-, or OOM-flavored on a known JVM
+  workload — it never runs for non-JVM services, unlike the four specialists
+  above.
 - `incident-reporter` always runs last, never gathers evidence itself, and
   only synthesizes the findings it's handed into the schema-valid report.
 - Subagents do not automatically inherit parent context — the coordinator
@@ -113,7 +119,7 @@ There is no lint/format tooling configured in `pyproject.toml`.
 
 **Claude Code project config** (drives agent behavior, not application code):
 - `.claude/commands/investigate-incident.md` — the `/investigate-incident` slash command; requires namespace/service/symptom/since_minutes, mints an `investigation_id` and creates `runs/<investigation_id>/scratchpad/` before delegating to `incident-coordinator` (single-agent fallback only if subagents are unavailable), and maps symptom patterns (OOM, probe failures, Kafka lag, latency) to the narrowest relevant tool subset rather than always calling everything. Also documents that Prometheus connectivity is coordinator-owned (see `prom_ensure_connection` rules above) and requires a "Subagent usage audit" table in the final output.
-- `.claude/agents/*.md` — the six subagents described under Architecture rules above; each file's frontmatter `tools:` list is the actual enforced allowlist for that subagent (e.g. `prometheus-analyst` has no `prom_ensure_connection`, by design — connectivity setup is coordinator-only). `incident-coordinator` and the four specialist subagents also have `Read`/`Write` to maintain per-investigation scratchpads under `runs/<investigation_id>/scratchpad/` — the coordinator persists its Structured Finding Brief to `coordinator-brief.md` (overwritten each wave); each specialist writes an immutable `wave<N>-<subagent-name>.md` per delegation with scope/tools called/key findings/evidence_refs/unknowns/decisions/handoff summary. Scratchpads hold summaries and `evidence_ref`s only, never raw data — that stays in `artifacts/`.
+- `.claude/agents/*.md` — the seven subagents described under Architecture rules above; each file's frontmatter `tools:` list is the actual enforced allowlist for that subagent (e.g. `prometheus-analyst` has no `prom_ensure_connection`, by design — connectivity setup is coordinator-only). `incident-coordinator` and the five specialist subagents also have `Read`/`Write` to maintain per-investigation scratchpads under `runs/<investigation_id>/scratchpad/` — the coordinator persists its Structured Finding Brief to `coordinator-brief.md` (overwritten each wave); each specialist writes an immutable `wave<N>-<subagent-name>.md` per delegation with scope/tools called/key findings/evidence_refs/unknowns/decisions/handoff summary. Scratchpads hold summaries and `evidence_ref`s only, never raw data — that stays in `artifacts/`.
 - `.claude/skills/incident-analysis/` and `.claude/skills/runbook-summarizer/` — forked-context skills (`context: fork`) for producing evidence-grounded reports and summarizing runbooks respectively.
 - `.claude/rules/incident-output.md` and `.claude/rules/testing.md` — scoped rules mirroring the required-fields and testing conventions above.
 - `.claude/settings.json` wires four read-only hooks in `.claude/hooks/*.py`: `block_unsafe_shell.py` (`PreToolUse`/`Bash`, a harness-level companion to `hooks.py::validate_kubectl_verb` for raw shell use), `audit_mcp_tool_call.py` and `audit_subagent_lifecycle.py` (`PostToolUse`/`SubagentStart`/`SubagentStop`, append JSONL to `runs/`), and `validate_final_report.py` (`Stop`, checks a final incident report has evidence_refs/Subagent usage audit/ruled_out/unknowns/a confirmed verdict). See the README's "Harness hooks" section, including how to disable them locally (`CLAUDE_OPS_HOOKS_DISABLED=1` or `disableAllHooks` in `.claude/settings.local.json`).

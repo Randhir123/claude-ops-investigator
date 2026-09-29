@@ -53,7 +53,8 @@ claude-ops-investigator/
 │   │   ├── prometheus-analyst.md
 │   │   ├── log-analyst.md
 │   │   ├── runbook-analyst.md
-│   │   └── incident-reporter.md
+│   │   ├── incident-reporter.md
+│   │   └── jvm-analyst.md   # conditional: GC/heap/OOM symptoms on a known JVM service
 │   ├── commands/             # Slash commands
 │   │   └── investigate-incident.md
 │   ├── hooks/                # Harness-level safety hooks
@@ -65,7 +66,7 @@ claude-ops-investigator/
 │   └── skills/               # Reusable investigation patterns
 ├── .bob/                     # Bob Shell harness (orchestrator/custom-mode-based)
 │   ├── mcp.json              # MCP server configuration
-│   ├── custom_modes.yaml     # Mode definitions: orchestrator + 5 specialist modes + fix-proposer
+│   ├── custom_modes.yaml     # Mode definitions: orchestrator + 6 specialist modes + fix-proposer
 │   ├── commands/              # Slash commands
 │   │   ├── investigate-incident.md
 │   │   └── propose-fix.md    # Read-only investigation + autonomous fix proposal
@@ -76,6 +77,7 @@ claude-ops-investigator/
 │   ├── rules-log-analyst/
 │   ├── rules-runbook-analyst/
 │   ├── rules-incident-reporter/
+│   ├── rules-jvm-analyst/     # conditional specialist -- see custom_modes.yaml whenToUse
 │   ├── rules-fix-proposer/    # Fix-proposer mode rules (used only by /propose-fix)
 │   │   └── 00-rules.md
 │   ├── rules-ops-investigator/  # Shared operational rules
@@ -129,6 +131,11 @@ delegation mechanism.
    - **prometheus-analyst**: Metrics (restarts, CPU, memory, errors, latency)
    - **log-analyst**: Historical IBM Cloud Logs across pod restarts
    - **runbook-analyst**: Match symptoms to known incident patterns
+   - **jvm-analyst** *(conditional)*: GC pause/throughput, heap, memory-pool/
+     native-memory, and thread signals for a known OpenJ9/IBM Semeru JVM
+     service, via the separate `jvm-troubleshooter` MCP server -- only
+     routed to when the symptom is GC-, heap-, memory-pressure-, or
+     OOM-flavored; does not run for non-JVM services
 
 3. **incident-reporter**: Final synthesis
    - Produces schema-valid incident report
@@ -160,6 +167,11 @@ See `.claude/agents/incident-coordinator.md` for the full policy.
      latency); also owns the wave 0 preflight call
    - **log-analyst**: Historical IBM Cloud Logs across pod restarts
    - **runbook-analyst**: Match symptoms to known incident patterns
+   - **jvm-analyst** *(conditional)*: GC pause/throughput, heap, memory-pool/
+     native-memory, and thread signals for a known OpenJ9/IBM Semeru JVM
+     service, via the separate `jvm-troubleshooter` MCP server -- only
+     routed to when the symptom is GC-, heap-, memory-pressure-, or
+     OOM-flavored; does not run for non-JVM services
 
 3. **incident-reporter**: Final synthesis
    - Produces schema-valid incident report

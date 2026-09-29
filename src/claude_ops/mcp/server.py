@@ -43,7 +43,7 @@ from claude_ops.tools.k8s_tools import (
 from claude_ops.tools.runbook_tools import get_runbook_catalog, search_runbooks
 from claude_ops.tools import prometheus_tools, prometheus_preflight, ibm_logs_tools
 from claude_ops.evidence.k8s_evidence import store_k8s_tool_result
-from claude_ops.evidence.raw_store import load_raw_evidence
+from claude_ops.evidence.raw_store import load_raw_evidence, store_raw_evidence
 from claude_ops.evidence.summarizers import summarize_k8s_events
 
 
@@ -647,6 +647,62 @@ def evidence_get_detail(evidence_ref: str) -> str:
             "partialResults": None,
             "alternatives": ["Use a valid evidence_ref returned by a previous tool call"],
         })
+
+
+@mcp.tool()
+def evidence_store_external(
+    content_type: str,
+    raw: Any,
+    summary: str,
+    source: str,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Archive a result from a *different* MCP server's tool call into this
+    investigation's own evidence store, so it gets a real `evidence_ref`
+    alongside everything gathered by this server's own k8s_*/prom_*/
+    ibm_logs_* tools.
+
+    Parameters:
+    - `content_type`: a dotted label for what this is, prefixed with the
+      source project so it never collides with this server's own content
+      types (e.g. "jvm.gc_pause_stats", "jvm.heap_status",
+      "jvm.incident_snapshot").
+    - `raw`: the full payload to archive verbatim — normally the `data` field
+      of the external tool's structured result (e.g. a jvm-troubleshooter-mcp
+      `get_gc_pause_stats` call's output).
+    - `summary`: a short, human-readable summary of `raw`, written by you —
+      there is no content-type-specific summarizer for external sources the
+      way there is for this server's own k8s/Prometheus results, so do not
+      leave this generic ("GC data") when the raw payload has a specific
+      number or finding worth surfacing.
+    - `source`: which external MCP server and tool this came from (e.g.
+      "jvm-troubleshooter-mcp.get_gc_pause_stats") — recorded in metadata so
+      the final report can cite real provenance, not just an evidence_ref.
+    - `metadata`: optional extra context (e.g. namespace, service,
+      lookback_minutes) merged alongside `source`.
+
+    Use this specifically for results from another MCP server in the same
+    investigation — for example jvm-troubleshooter-mcp's GC/heap/memory-pool/
+    thread tools, called by the `jvm-analyst` subagent. Do not use it for this
+    server's own k8s_*/prom_*/ibm_logs_* tools, which already archive their
+    own results automatically without this call. This exists so a
+    multi-server investigation still produces one consistent evidence trail
+    instead of two incompatible ones.
+
+    Returns a compact record (`evidence_ref`, `content_type`, `summary`,
+    `size_bytes`) in the same shape as this server's own evidence-producing
+    tools. Read-only from this server's own perspective — it only writes to
+    the local `artifacts/` evidence store; it cannot reach or affect the
+    external server, Kubernetes, Prometheus, or IBM Cloud Logs.
+    """
+    merged_metadata = {"source": source, **(metadata or {})}
+    record = store_raw_evidence(
+        content_type=content_type,
+        raw=raw,
+        summary=summary,
+        metadata=merged_metadata,
+    )
+    return _json({"isError": False, "data": record.to_dict()})
 
 
 @mcp.prompt()

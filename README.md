@@ -71,10 +71,11 @@ pytest
 
 ## Slash commands
 
-Both harnesses expose the same two capabilities: a read-only investigation
-command, and a separate, autonomous fix-proposal command. These two are
-deliberately kept apart — `/investigate-incident` never triggers a code
-change on its own; only the explicit `/propose-fix` command can do that.
+Both harnesses expose the same three commands: a read-only investigation
+command, a standalone JVM health-check command, and a separate, autonomous
+fix-proposal command. `/investigate-incident` and `/investigate-jvm` are
+both strictly read-only; `/propose-fix` is the only one that can ever open a
+(draft) PR, and none of the read-only commands trigger it on their own.
 
 ### Claude Code slash commands
 
@@ -111,6 +112,10 @@ What it does:
    - `log-analyst` — historical IBM Cloud Logs search (errors, probe
      failures, arbitrary text) spanning restarts/deployments
    - `runbook-analyst` — matches the symptom against local runbooks
+   - `jvm-analyst` *(conditional)* — GC pause/throughput, heap, memory-pool/
+     native-memory, and thread signals via the separate `jvm-troubleshooter`
+     MCP server; only routed to when the symptom is GC-, heap-,
+     memory-pressure-, or OOM-flavored on a known OpenJ9/IBM Semeru service
 3. Every specialist stores raw evidence as an `evidence_ref` and hands back
    only summaries/findings — the coordinator never gathers evidence directly.
    Each also writes a concise markdown scratchpad (scope, tools called, key
@@ -134,10 +139,27 @@ What it does not do:
 - Does not run destructive commands
 - Does not fetch raw evidence detail unless needed
 
+#### `/investigate-jvm`
+
+A lightweight, standalone JVM health check against one OpenJ9/IBM Semeru
+service — GC behavior, heap, memory pools, threads, allocation rate, leak
+trend — using only `jvm-troubleshooter`'s own tools, no coordinator/subagent
+delegation or evidence store required:
+
+```
+/investigate-jvm namespace=<namespace> service=<service> lookback_minutes=<minutes>
+```
+
+Use this for a quick point check; use `/investigate-incident` (which routes
+to `jvm-analyst` automatically for a GC/heap/OOM-flavored symptom) when the
+finding needs to sit alongside other specialists' evidence in one incident
+report. See `.claude/commands/investigate-jvm.md`
+for the full workflow this command follows.
+
 ### Bob Shell slash commands
 
 Bob Shell (`.bob/`) is a parallel harness that talks to the same MCP tool
-layer and exposes the same two commands.
+layer and exposes the same three commands.
 
 #### `/investigate-incident`
 
@@ -147,11 +169,23 @@ Read-only, same behavior and args as the Claude Code version above:
 /investigate-incident namespace=<namespace> service=<service> symptom="<specific symptom>" since_minutes=<minutes>
 ```
 
-An orchestrator mode decomposes the incident and delegates to the same four
+An orchestrator mode decomposes the incident and delegates to the same
 specialist roles (`k8s-evidence-collector`, `prometheus-analyst`,
-`log-analyst`, `runbook-analyst`), then hands off to `incident-reporter` for
-a schema-valid, evidence-grounded report — see `.bob/commands/investigate-incident.md`
+`log-analyst`, `runbook-analyst`, plus `jvm-analyst` when the symptom is
+GC-, heap-, memory-pressure-, or OOM-flavored on a known JVM workload), then
+hands off to `incident-reporter` for a schema-valid, evidence-grounded report — see `.bob/commands/investigate-incident.md`
 and `AGENTS.md` for the full workflow.
+
+#### `/investigate-jvm`
+
+Same lightweight, standalone JVM health check as the Claude Code version
+above, no mode switch required:
+
+```
+/investigate-jvm namespace=<namespace> service=<service> lookback_minutes=<minutes>
+```
+
+See `.bob/commands/investigate-jvm.md` for the full workflow.
 
 #### `/propose-fix`
 
@@ -339,3 +373,44 @@ Tools:
 
 Prompt:
 - `investigate_incident`
+
+### Second MCP server: `jvm-troubleshooter`
+
+A dedicated, independently-testable MCP server for OpenJ9/IBM Semeru JVM
+internals (GC, heap, memory pools, threads) lives alongside this project at
+`mcp-servers/jvm-troubleshooter/` — its own `pyproject.toml`, `src/`,
+`tests/`, and `README.md`, but committed in this same repo/PR rather than as
+a separate GitHub project, so the whole `jvm-analyst` feature (specialist +
+its server + routing) reviews and ships as one change.
+
+```text
+mcp-servers/jvm-troubleshooter/src/jvm_troubleshooter/mcp/server.py = second local MCP server
+.mcp.json / .bob/mcp.json = both declare it as "jvm-troubleshooter", PYTHONPATH pointed at
+                            ${PWD}/mcp-servers/jvm-troubleshooter/src (same pattern as the
+                            main server's own ${PWD}/src)
+```
+
+It's backed by Prometheus (or Thanos Query) scraping OpenJ9 JVMs via the
+standard Prometheus JMX Exporter — a different metric-naming convention than
+this project's own `prom_*` tools assume, so it ships its own PromQL and its
+own `PROMETHEUS_URL`/`JVM_LABEL_KEY`. Because `.mcp.json`'s `env` block for
+this entry sets those directly (mirroring how the entry itself is
+configured) rather than relying on `.env`, set real values there rather than
+in `.env` for this specific server.
+
+Its 18 tools (GC activity/pause/throughput/behavior-over-time, heap
+status/trend, memory-pool breakdown/native-memory/fragmentation, allocation
+rate, leak indicator, thread status, GC-memory correlation, before/after
+deploy comparison, one-call incident snapshot, and three PNG chart renderers)
+are documented in full — including caveats on what each one can't see — in
+[`mcp-servers/jvm-troubleshooter/README.md`](mcp-servers/jvm-troubleshooter/README.md).
+Run its own test suite (independent of this project's `pytest` invocation,
+which only looks at the root `tests/`) with:
+
+```bash
+cd mcp-servers/jvm-troubleshooter
+pytest
+```
+
+For a quick, standalone JVM health check outside the full incident-
+investigation flow, see `/investigate-jvm` under Slash commands above.

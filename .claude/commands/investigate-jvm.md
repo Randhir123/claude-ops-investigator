@@ -52,9 +52,13 @@ Examples:
      out, call `jvm_get_gc_log_events(namespace, pod_name, since_minutes)`
      (on the `claude-ops-investigator` server) for **true per-pause**
      max/p99 with timestamps and triggers from the pod's verbose GC log. It
-     needs `-verbose:gc` in jvm.options; a `business` error means verbose GC
-     is off — report that as a gap and a next step for a human, not as "no
-     GC activity".
+     covers GC logged to stderr (`-verbose:gc`). If it returns a `business`
+     error, the JVM may write its GC log to a file (`-Xverbosegclog`) or not
+     log GC at all: ask the human to run `bash scripts/capture-gclog.sh
+     <namespace> <pod>` (never run it yourself; it reports which case
+     applies) and analyze what it saves with
+     `jvm_analyze_gc_log("runs/gclogs/<dir>")`. Until then, report it as a
+     gap, not as "no GC activity".
    - High or rising heap usage → `get_heap_status` for the current number,
      **plus `render_heap_trend_chart`** to see the actual shape (sawtooth
      returning to baseline vs. a rising floor), and **`render_gc_memory_correlation_chart`**

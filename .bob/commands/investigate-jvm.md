@@ -44,9 +44,12 @@ $ARGUMENTS
      `get_gc_throughput`, plus `render_gc_behavior_chart` for the trend. For
      the pods that stand out, `jvm_get_gc_log_events(namespace, pod_name,
      since_minutes)` (on `claude-ops-investigator`) gives true per-pause
-     max/p99 from the pod's verbose GC log. A `business` error means
-     `-verbose:gc` is off — a gap and a next step for a human, not "no GC
-     activity".
+     max/p99 from the pod's verbose GC log on stderr. A `business` error
+     means no GC events on stderr: the JVM may log GC to a file
+     (`-Xverbosegclog`) — ask the human to run `bash scripts/capture-gclog.sh
+     <namespace> <pod>` (never run it yourself) and analyze the saved
+     directory with `jvm_analyze_gc_log` — or not log GC at all. Either way
+     it's a gap until then, not "no GC activity".
    - High or rising heap usage → `get_heap_status`, plus
      `render_heap_trend_chart` (sawtooth vs. rising floor) and
      `render_gc_memory_correlation_chart` (real leak vs. load spike) — read

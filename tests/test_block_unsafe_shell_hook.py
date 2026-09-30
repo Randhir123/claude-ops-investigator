@@ -36,6 +36,8 @@ def _run_hook(command: str) -> dict | None:
         "timeout 60 zsh scripts/capture-javacore.sh si pod-1",
         "source scripts/capture-javacore.sh si pod-1",
         "echo hi; capture-javacore.sh si pod-1",
+        "scripts/capture-gclog.sh si pod-1",
+        "bash scripts/capture-gclog.sh -m 5 si pod-1 app",
         "kubectl exec -n si pod-1 -- kill -3 1",
         "kubectl -n si delete pod pod-1",
     ],
@@ -58,6 +60,7 @@ def test_human_only_and_destructive_commands_are_denied(command):
         "sed -n 1,20p scripts/capture-javacore.sh",
         "chmod +x scripts/capture-javacore.sh",
         "git add scripts/capture-javacore.sh",
+        "sed -n 1,20p scripts/capture-gclog.sh",
     ],
 )
 def test_read_only_commands_are_allowed(command):

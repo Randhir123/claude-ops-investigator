@@ -630,12 +630,40 @@ def jvm_get_gc_log_events(
     copy-failed events and GC warnings. Unlike the Prometheus-based JVM
     tools, these are real per-collection pause times, not 5-minute averages.
 
-    Requires `-verbose:gc` in the service's jvm.options. If it isn't
-    enabled, this returns `errorCategory: "business"` — report that as a gap
-    (a human must enable it), never as "no GC activity". The result is
-    archived as evidence (`content_type: jvm.gc_log_events`).
+    Requires `-verbose:gc` in the service's jvm.options (GC log to stderr).
+    If the JVM writes its GC log to a file instead (`-Xverbosegclog`), use
+    `jvm_analyze_gc_log` on files a human pulled with
+    `scripts/capture-gclog.sh`. If no GC events are found, this returns
+    `errorCategory: "business"` — report that as a gap, never as "no GC
+    activity". The result is archived as evidence
+    (`content_type: jvm.gc_log_events`).
     """
     return _json(jvm_diagnostics_tools.jvm_get_gc_log_events(namespace, pod_name, container, since_minutes, previous))
+
+
+@mcp.tool()
+def jvm_analyze_gc_log(path: str) -> str:
+    """True per-pause GC statistics from verbose GC log *files* a human pulled out of a pod.
+
+    Parameters:
+    - `path`: a file or a directory under `runs/gclogs/` (relative to the
+      repo root, or absolute). A directory's files — e.g. rotated
+      `-Xverbosegclog` files — are analyzed together. Anything outside
+      `runs/gclogs/` is rejected.
+
+    Read-only, local files only. Same output as `jvm_get_gc_log_events`
+    (pause p50/p95/p99/max, scavenge vs global, longest pauses with
+    triggers, percolate/copy-failed events, GC warnings), for JVMs that write
+    their GC log to a file (`-Xverbosegclog`) instead of stderr. Archived as
+    evidence (`content_type: jvm.gc_log_file_analysis`).
+
+    Agents never pull files out of pods (that needs exec access): a human
+    runs `scripts/capture-gclog.sh <namespace> <pod>`, which also tells them
+    when the JVM logs GC to stderr instead (then use `jvm_get_gc_log_events`)
+    or has no verbose GC configured at all. If nothing has been captured yet,
+    ask the human to run it — never try to run it yourself.
+    """
+    return _json(jvm_diagnostics_tools.jvm_analyze_gc_log(path))
 
 
 @mcp.tool()

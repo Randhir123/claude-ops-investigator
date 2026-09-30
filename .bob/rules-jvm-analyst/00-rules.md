@@ -62,7 +62,7 @@ make about the trend still carries a real `evidence_ref`.
   `get_before_after_deploy_comparison`, `render_heap_trend_chart`,
   `render_gc_behavior_chart`, `render_gc_memory_correlation_chart`, plus
   `claude-ops-investigator`'s own `evidence_store_external`,
-  `jvm_get_gc_log_events` and `jvm_analyze_javacore` (the last two archive
+  `jvm_get_gc_log_events`, `jvm_analyze_gc_log` and `jvm_analyze_javacore` (the last three archive
   their own results and return an `evidence_ref` — cite it directly, don't
   re-archive). Never call this
   project's own `k8s_*`/`prom_*`/`ibm_logs_*` tools from this mode — that is
@@ -86,9 +86,14 @@ make about the trend still carries a real `evidence_ref`.
   for a specific pod (pod name from your task or k8s-evidence-collector,
   never guessed; `previous=true` after a restart). It parses the pod's real
   verbose GC log: per-pause max/p99 with timestamps, scavenge vs global, and
-  triggers. It needs `-verbose:gc` in the service's jvm.options; a
-  `business` error means it isn't enabled — report that as a gap and list
-  "a human enables -verbose:gc" as a next step, never as "no GC activity".
+  triggers. That covers JVMs logging GC to stderr (`-verbose:gc`). If the
+  JVM writes its GC log to a file (`-Xverbosegclog`), the file has to be
+  pulled out of the pod, which you never do: ask a human to run
+  `bash scripts/capture-gclog.sh <namespace> <pod>` (it reports whether the
+  JVM logs to a file, to stderr, or not at all), then call
+  `jvm_analyze_gc_log` on the `runs/gclogs/...` directory it prints. A
+  `business` error from `jvm_get_gc_log_events` means no GC events on
+  stderr — report it as a gap and a next step, never as "no GC activity".
 - **Never treat heap "max" as the pod's memory limit.** It's the JVM's own
   -Xmx-derived ceiling, not `resources.limits.memory` — a pod can be
   OOM-killed with heap usage still low. If OOM is the suspected symptom, pull

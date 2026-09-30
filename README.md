@@ -418,8 +418,8 @@ investigation flow, see `/investigate-jvm` under Slash commands above.
 ### GC logs and thread dumps
 
 The Prometheus-based JVM tools give counts and 5-minute averages. For the
-real thing, `claude-ops-investigator` adds two read-only tools, and one
-script that only a human runs:
+real thing, `claude-ops-investigator` adds three read-only tools, and two
+scripts that only a human runs:
 
 - **`jvm_get_gc_log_events(namespace, pod_name, since_minutes, previous)`**
   reads the pod's logs (`kubectl logs`, the same read-only verb as
@@ -434,6 +434,22 @@ script that only a human runs:
   without Liberty's logging in the way. Expect roughly a few MB of extra
   log volume per pod per hour. Until it's on, the tool returns a `business`
   error saying so.
+- **`scripts/capture-gclog.sh [-m max_files] <namespace> <pod> [container]`**
+  — **human-run only**, for JVMs that write their GC log to a *file*
+  (`-Xverbosegclog`). It reads the JVM's real setting from its command line
+  and `OPENJ9_JAVA_OPTIONS`/`IBM_JAVA_OPTIONS`/`JAVA_TOOL_OPTIONS`/
+  `JDK_JAVA_OPTIONS` (including `%pid`/`%seq` patterns and rotated files),
+  also checks `/tmp/verbosegc.*.txt` and `/opt/ibm/*verbosegc.*.txt`, and
+  streams the newest files (default 10) into `runs/gclogs/<pod>-<utc>/`.
+  It changes nothing in the pod. If the JVM only has `-verbose:gc`, it tells
+  you to use `jvm_get_gc_log_events` instead. If no verbose GC is
+  configured at all, it says so: OpenJ9 can't switch it on at runtime, so
+  that needs a `jvm.options` change and a restart. Same safeguards as the
+  javacore script.
+- **`jvm_analyze_gc_log(path)`** gives the same analysis as
+  `jvm_get_gc_log_events` for a file or a whole capture directory under
+  `runs/gclogs/` (rotated files are analyzed together). IBM GCMV remains the
+  tool for very large logs.
 - **`scripts/capture-javacore.sh [-n count] [-i seconds] <namespace> <pod> [container]`**
   — **human-run only.** Taking a thread dump needs `kubectl exec`
   (`jcmd <pid> Dump.java`, falling back to SIGQUIT if the image has no
@@ -453,5 +469,5 @@ script that only a human runs:
   lock owners, blocked/parked threads, common stacks, and hot frames among
   runnable threads. IBM TMDA remains the tool for deeper analysis.
 
-Both tools archive their result as evidence and return an `evidence_ref`;
-`jvm-analyst` is allowed to call them in both harnesses.
+All three tools archive their result as evidence and return an
+`evidence_ref`; `jvm-analyst` is allowed to call them in both harnesses.

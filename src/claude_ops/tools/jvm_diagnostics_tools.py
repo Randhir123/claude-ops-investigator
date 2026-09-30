@@ -6,6 +6,9 @@ Neither tool can trigger anything inside a pod:
   (an allowed read-only verb) and parses the OpenJ9 verbose GC XML the JVM
   writes to stderr when `-verbose:gc` is in its jvm.options. Enabling that
   option is a deploy-config change a human makes; this tool only reads.
+- `jvm_analyze_gc_log` parses verbose GC log *files* (`-Xverbosegclog`)
+  that a human pulled with `scripts/capture-gclog.sh`. It only reads files
+  under `runs/gclogs/`.
 - `jvm_analyze_javacore` parses a javacore file that a human already
   captured with `scripts/capture-javacore.sh` (which needs `kubectl exec`
   and is deliberately never run by an agent). It only reads files under
@@ -28,11 +31,46 @@ from claude_ops.tools.k8s_tools import _run_kubectl
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 JAVACORE_DIR = PROJECT_ROOT / "runs" / "javacores"
+GCLOG_DIR = PROJECT_ROOT / "runs" / "gclogs"
 
 _MAX_SINCE_MINUTES = 1440
 _LOG_LIMIT_BYTES = 64 * 1024 * 1024
 _MAX_JAVACORE_BYTES = 50 * 1024 * 1024
+_MAX_GCLOG_BYTES = 200 * 1024 * 1024
 _TOP_N = 10
+
+
+def _resolve_confined(path: str, root: Path, capture_hint: str) -> Path | dict[str, Any]:
+    """Resolve `path` (repo-relative or absolute) and require it to stay under `root`."""
+    attempted = {"path": path}
+    try:
+        candidate = Path(path)
+        resolved = (candidate if candidate.is_absolute() else PROJECT_ROOT / candidate).resolve()
+    except (OSError, RuntimeError) as exc:
+        return ToolError("validation", False, f"Invalid path: {exc}", attempted=attempted).to_dict()
+
+    resolved_root = root.resolve()
+    if not resolved.is_relative_to(resolved_root):
+        return ToolError(
+            "validation",
+            False,
+            f"Only files under {resolved_root} can be analyzed.",
+            attempted=attempted,
+            alternatives=[capture_hint],
+        ).to_dict()
+
+    if not resolved.exists():
+        available = sorted(p.name for p in resolved_root.iterdir()) if resolved_root.is_dir() else []
+        return ToolError(
+            "validation",
+            False,
+            f"Nothing at {resolved}.",
+            attempted=attempted,
+            partialResults={"available": available[-20:]},
+            alternatives=[f"A human needs to capture it first — agents never exec into pods. {capture_hint}"],
+        ).to_dict()
+
+    return resolved
 
 # --- verbose GC ---------------------------------------------------------------
 
@@ -137,11 +175,12 @@ def parse_verbose_gc(text: str) -> dict[str, Any]:
     for pause in pauses:
         by_type.setdefault("+".join(pause["gc_types"]), []).append(pause["duration_ms"])
 
+    # min/max rather than first/last: rotated GC log files may be concatenated out of order.
     timestamps = [p["timestamp"] for p in pauses if p["timestamp"]]
     return {
         "gc_lines_found": gc_lines,
-        "first_pause_at": timestamps[0] if timestamps else None,
-        "last_pause_at": timestamps[-1] if timestamps else None,
+        "first_pause_at": min(timestamps) if timestamps else None,
+        "last_pause_at": max(timestamps) if timestamps else None,
         "pauses": _pause_stats([p["duration_ms"] for p in pauses]),
         "pauses_by_gc_type": {k: _pause_stats(v) for k, v in sorted(by_type.items())},
         "longest_pauses": sorted(pauses, key=lambda p: -p["duration_ms"])[:_TOP_N],
@@ -153,10 +192,10 @@ def parse_verbose_gc(text: str) -> dict[str, Any]:
     }
 
 
-def _gc_summary(pod_name: str, since_minutes: int, parsed: dict[str, Any]) -> str:
+def _gc_summary(label: str, parsed: dict[str, Any]) -> str:
     p = parsed["pauses"]
     parts = [
-        f"{pod_name} verbose GC, last {since_minutes}m: {p['count']} pauses, "
+        f"{label}: {p['count']} pauses ({parsed['first_pause_at']} to {parsed['last_pause_at']}), "
         f"max {p['max_ms']}ms, p99 {p['p99_ms']}ms, p50 {p['p50_ms']}ms, total {p['total_ms']}ms"
     ]
     for gc_type, stats in parsed["pauses_by_gc_type"].items():
@@ -200,8 +239,11 @@ def jvm_get_gc_log_events(
             f"No OpenJ9 verbose GC events found in {pod_name}'s logs for the last {since}m.",
             attempted=attempted,
             alternatives=[
-                "Verbose GC is probably not enabled: a human must add -verbose:gc to the service's jvm.options "
-                "(e.g. its jvmoptions-*-config ConfigMap) and roll the pods — this tool never changes config",
+                "If the JVM writes its GC log to a file (-Xverbosegclog) rather than stderr, ask a human to run "
+                "scripts/capture-gclog.sh <namespace> <pod> and analyze the result with jvm_analyze_gc_log",
+                "Otherwise verbose GC is probably not enabled: a human must add -verbose:gc (or "
+                "-Xverbosegclog:<file>) to the service's jvm.options (e.g. its jvmoptions-*-config ConfigMap) "
+                "and roll the pods — this tool never changes config",
                 "If the pod restarted, retry with previous=true to read the prior container's logs",
                 "Use jvm-troubleshooter's Prometheus-based GC tools meanwhile (bucket-averaged, not per-pause)",
                 "Record this as an unknowns/gap — not as 'no GC activity'",
@@ -212,8 +254,58 @@ def jvm_get_gc_log_events(
     record = store_raw_evidence(
         content_type="jvm.gc_log_events",
         raw=parsed,
-        summary=_gc_summary(pod_name, since, parsed),
+        summary=_gc_summary(f"{pod_name} verbose GC (stderr), last {since}m", parsed),
         metadata={**attempted, "container": container, "source": "kubectl logs"},
+    )
+    return ok(record.to_dict())
+
+
+def jvm_analyze_gc_log(path: str) -> dict[str, Any]:
+    """Analyze verbose GC log file(s) a human pulled into runs/gclogs/ (read-only, local files).
+
+    `path` may be one file or a directory of rotated files (as saved by
+    scripts/capture-gclog.sh); a directory's files are read in name order and
+    analyzed together.
+    """
+    attempted = {"path": path}
+    resolved = _resolve_confined(
+        path, GCLOG_DIR, "Run scripts/capture-gclog.sh <namespace> <pod>; it saves under runs/gclogs/."
+    )
+    if isinstance(resolved, dict):
+        return resolved
+
+    files = sorted(p for p in resolved.iterdir() if p.is_file()) if resolved.is_dir() else [resolved]
+    if not files:
+        return ToolError("validation", False, f"{resolved} contains no files.", attempted=attempted).to_dict()
+
+    total_bytes = sum(p.stat().st_size for p in files)
+    if total_bytes > _MAX_GCLOG_BYTES:
+        return ToolError(
+            "validation",
+            False,
+            f"GC logs total {total_bytes // (1024 * 1024)}MB, over the {_MAX_GCLOG_BYTES // (1024 * 1024)}MB limit.",
+            attempted=attempted,
+            partialResults={"files": [p.name for p in files]},
+            alternatives=["Analyze one rotated file at a time", "Use IBM GCMV for very large GC logs"],
+        ).to_dict()
+
+    parsed = parse_verbose_gc("\n".join(p.read_text(errors="replace") for p in files))
+    if parsed["pauses"]["count"] == 0:
+        return ToolError(
+            "validation",
+            False,
+            "No OpenJ9 verbose GC pauses (<exclusive-end durationms=...>) found — not an OpenJ9 verbose GC log?",
+            attempted=attempted,
+            partialResults={"files": [p.name for p in files]},
+        ).to_dict()
+
+    rel = resolved.relative_to(PROJECT_ROOT)
+    parsed["files"] = [p.name for p in files]
+    record = store_raw_evidence(
+        content_type="jvm.gc_log_file_analysis",
+        raw=parsed,
+        summary=_gc_summary(f"{rel} ({len(files)} file(s))", parsed),
+        metadata={"path": str(rel), "files": parsed["files"], "source": "verbose GC log file"},
     )
     return ok(record.to_dict())
 
@@ -313,33 +405,13 @@ def _javacore_summary(name: str, parsed: dict[str, Any]) -> str:
 def jvm_analyze_javacore(path: str) -> dict[str, Any]:
     """Analyze a javacore that a human captured into runs/javacores/ (read-only, local file)."""
     attempted = {"path": path}
-    try:
-        resolved = (PROJECT_ROOT / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
-    except (OSError, RuntimeError) as exc:
-        return ToolError("validation", False, f"Invalid path: {exc}", attempted=attempted).to_dict()
-
-    root = JAVACORE_DIR.resolve()
-    if not resolved.is_relative_to(root):
-        return ToolError(
-            "validation",
-            False,
-            f"Only files under {root} can be analyzed.",
-            attempted=attempted,
-            alternatives=["Capture the javacore with scripts/capture-javacore.sh, which saves it under runs/javacores/"],
-        ).to_dict()
-
+    resolved = _resolve_confined(
+        path, JAVACORE_DIR, "Run scripts/capture-javacore.sh <namespace> <pod>; it saves under runs/javacores/."
+    )
+    if isinstance(resolved, dict):
+        return resolved
     if not resolved.is_file():
-        available = sorted(p.name for p in root.glob("*.txt")) if root.is_dir() else []
-        return ToolError(
-            "validation",
-            False,
-            f"No javacore file at {resolved}.",
-            attempted=attempted,
-            partialResults={"available_javacores": available[-20:]},
-            alternatives=[
-                "A human needs to run scripts/capture-javacore.sh <namespace> <pod> first — agents never capture dumps",
-            ],
-        ).to_dict()
+        return ToolError("validation", False, f"{resolved} is not a file.", attempted=attempted).to_dict()
 
     if resolved.stat().st_size > _MAX_JAVACORE_BYTES:
         return ToolError(

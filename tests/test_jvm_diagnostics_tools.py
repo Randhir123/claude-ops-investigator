@@ -158,7 +158,7 @@ def test_gc_log_events_reads_pod_logs_read_only_and_stores_evidence(monkeypatch,
     assert "--previous" in captured["args"]
     assert not {"exec", "cp", "debug"} & set(captured["args"])
     assert result["data"]["content_type"] == "jvm.gc_log_events"
-    assert "3 pauses, max 250.7ms" in result["data"]["summary"]
+    assert "3 pauses (2026-10-01T21:20:00.013 to 2026-10-01T21:30:00.090), max 250.7ms" in result["data"]["summary"]
     assert result["data"]["evidence_ref"].startswith("ev_")
 
 
@@ -182,6 +182,96 @@ def test_gc_log_events_passes_kubectl_errors_through(monkeypatch):
 
     assert result["isError"] is True
     assert "not found" in result["message"]
+
+
+def test_gc_log_events_gap_points_at_file_based_capture(monkeypatch):
+    monkeypatch.setattr(k8s_tools.subprocess, "run", lambda args, **kwargs: FakeCompleted(0, stdout="app line\n"))
+
+    result = jvm_diagnostics_tools.jvm_get_gc_log_events("si", "tsq-abc")
+
+    assert any("capture-gclog.sh" in alt and "jvm_analyze_gc_log" in alt for alt in result["alternatives"])
+
+
+# --- verbose GC log files ------------------------------------------------------------
+
+_SCAVENGE_BLOCK = """\
+<exclusive-start id="1" timestamp="{ts}" intervalms="1.0">
+</exclusive-start>
+<af-start id="2" type="nursery" timestamp="{ts}" />
+<cycle-start id="3" type="scavenge" contextid="0" timestamp="{ts}" />
+<exclusive-end id="4" timestamp="{ts}" durationms="{ms}" />
+"""
+
+
+@pytest.fixture
+def gclog_dir(monkeypatch, tmp_path):
+    root = tmp_path / "repo"
+    gc_dir = root / "runs" / "gclogs"
+    gc_dir.mkdir(parents=True)
+    monkeypatch.setattr(jvm_diagnostics_tools, "PROJECT_ROOT", root)
+    monkeypatch.setattr(jvm_diagnostics_tools, "GCLOG_DIR", gc_dir)
+    return gc_dir
+
+
+def test_analyze_gc_log_single_file(gclog_dir, evidence_to_tmp):
+    (gclog_dir / "verbosegc.20261001.212000.1.txt").write_text(VERBOSE_GC_LOG)
+
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log("runs/gclogs/verbosegc.20261001.212000.1.txt")
+
+    assert result["isError"] is False
+    assert result["data"]["content_type"] == "jvm.gc_log_file_analysis"
+    assert "3 pauses" in result["data"]["summary"]
+    assert "max 250.7ms" in result["data"]["summary"]
+
+
+def test_analyze_gc_log_directory_of_rotated_files_uses_true_time_range(gclog_dir, evidence_to_tmp):
+    capture = gclog_dir / "tsq-abc-20261001T220000Z"
+    capture.mkdir()
+    # Circular rotation: the lexically-first file holds the *newest* events.
+    (capture / "gc.log.001").write_text(_SCAVENGE_BLOCK.format(ts="2026-10-01T21:59:00.000", ms="40.0"))
+    (capture / "gc.log.002").write_text(_SCAVENGE_BLOCK.format(ts="2026-10-01T21:00:00.000", ms="10.0"))
+
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log("runs/gclogs/tsq-abc-20261001T220000Z")
+
+    assert result["isError"] is False
+    summary = result["data"]["summary"]
+    assert "(2 file(s))" in summary
+    assert "2 pauses (2026-10-01T21:00:00.000 to 2026-10-01T21:59:00.000)" in summary
+    assert "max 40.0ms" in summary
+
+
+@pytest.mark.parametrize("path", ["/etc/hosts", "runs/gclogs/../../.env", "runs/javacores"])
+def test_analyze_gc_log_rejects_paths_outside_gclog_dir(gclog_dir, path):
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log(path)
+
+    assert result["errorCategory"] == "validation"
+    assert "Only files under" in result["message"]
+
+
+def test_analyze_gc_log_missing_points_at_human_capture(gclog_dir):
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log("runs/gclogs/nothing-here")
+
+    assert result["errorCategory"] == "validation"
+    assert any("capture-gclog.sh" in alt for alt in result["alternatives"])
+
+
+def test_analyze_gc_log_without_gc_events(gclog_dir):
+    (gclog_dir / "app.log").write_text("INFO just application output\n")
+
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log("runs/gclogs/app.log")
+
+    assert result["errorCategory"] == "validation"
+    assert "not an OpenJ9 verbose GC log" in result["message"]
+
+
+def test_analyze_gc_log_size_limit(gclog_dir, monkeypatch):
+    monkeypatch.setattr(jvm_diagnostics_tools, "_MAX_GCLOG_BYTES", 100)
+    (gclog_dir / "big.txt").write_text(VERBOSE_GC_LOG)
+
+    result = jvm_diagnostics_tools.jvm_analyze_gc_log("runs/gclogs/big.txt")
+
+    assert result["errorCategory"] == "validation"
+    assert "over the" in result["message"]
 
 
 # --- javacore ----------------------------------------------------------------------
@@ -239,8 +329,9 @@ def test_analyze_javacore_missing_file_lists_available_and_points_at_human_scrip
     result = jvm_diagnostics_tools.jvm_analyze_javacore("runs/javacores/missing.txt")
 
     assert result["errorCategory"] == "validation"
-    assert result["partialResults"] == {"available_javacores": ["older.txt"]}
-    assert any("human needs to run scripts/capture-javacore.sh" in alt for alt in result["alternatives"])
+    assert result["partialResults"] == {"available": ["older.txt"]}
+    assert any("A human needs to capture it first" in alt for alt in result["alternatives"])
+    assert any("capture-javacore.sh" in alt for alt in result["alternatives"])
 
 
 def test_analyze_javacore_rejects_non_javacore_file(javacore_dir):

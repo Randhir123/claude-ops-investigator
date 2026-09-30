@@ -414,3 +414,44 @@ pytest
 
 For a quick, standalone JVM health check outside the full incident-
 investigation flow, see `/investigate-jvm` under Slash commands above.
+
+### GC logs and thread dumps
+
+The Prometheus-based JVM tools give counts and 5-minute averages. For the
+real thing, `claude-ops-investigator` adds two read-only tools, and one
+script that only a human runs:
+
+- **`jvm_get_gc_log_events(namespace, pod_name, since_minutes, previous)`**
+  reads the pod's logs (`kubectl logs`, the same read-only verb as
+  `k8s_get_pod_logs`) and parses OpenJ9 verbose GC XML: true per-pause
+  p50/p95/p99/max, scavenge vs global, the longest pauses with timestamps and
+  triggers (allocation failure, `System.gc()`, concurrent kickoff),
+  percolate/copy-failed events and GC warnings.
+  **Prerequisite:** verbose GC has to be switched on. For a Liberty service,
+  add `-verbose:gc` to its `jvm.options` (e.g. the
+  `jvmoptions-<service>-config` ConfigMap) and roll the pods. OpenJ9 writes
+  it natively to stderr, so it lands in `kubectl logs` and IBM Cloud Logs
+  without Liberty's logging in the way. Expect roughly a few MB of extra
+  log volume per pod per hour. Until it's on, the tool returns a `business`
+  error saying so.
+- **`scripts/capture-javacore.sh [-n count] [-i seconds] <namespace> <pod> [container]`**
+  — **human-run only.** Taking a thread dump needs `kubectl exec`
+  (`jcmd <pid> Dump.java`, falling back to SIGQUIT if the image has no
+  `jcmd`, then reading the javacore file back), which agents are never
+  allowed to do. The script refuses to run without an interactive terminal,
+  shows the kubectl context, asks you to type the pod name to confirm, and
+  saves each javacore to `runs/javacores/<pod>-<utc>[-n].txt`
+  (gitignored). `.claude/hooks/block_unsafe_shell.py` also denies it from
+  the agent's Bash tool. The JVM keeps running; application threads pause
+  briefly while each dump is written. Use `-n 3 -i 10` to take a series:
+  threads sitting in the same frame in every dump are stuck, not just busy.
+  Run it with `bash scripts/capture-javacore.sh …`; it also prints the IBM
+  TMDA command for the saved files.
+- **`jvm_analyze_javacore(path)`** analyzes a captured javacore (only files
+  under `runs/javacores/`): threads by state, largest thread pools (digits
+  collapsed, e.g. `Default Executor-thread-#`), deadlocks, most-contended
+  lock owners, blocked/parked threads, common stacks, and hot frames among
+  runnable threads. IBM TMDA remains the tool for deeper analysis.
+
+Both tools archive their result as evidence and return an `evidence_ref`;
+`jvm-analyst` is allowed to call them in both harnesses.

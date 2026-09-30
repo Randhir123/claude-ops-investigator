@@ -57,6 +57,14 @@ def empty_matrix_result() -> dict:
     return {"status": "success", "data": {"resultType": "matrix", "result": []}}
 
 
+@pytest.fixture(autouse=True)
+def _no_grafana_env(monkeypatch):
+    # server.py's load_dotenv() may pull GRAFANA_* from a local .env; GRAFANA_URL switches
+    # every query to Grafana mode, so clear them and let Grafana tests opt in explicitly.
+    for var in ("GRAFANA_URL", "GRAFANA_DATASOURCE_UID", "GRAFANA_API_TOKEN", "GRAFANA_SESSION_COOKIE"):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def prom_env(monkeypatch):
     monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.local:9090")

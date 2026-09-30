@@ -224,6 +224,8 @@ Prometheus:
 - `PROMETHEUS_AUTO_PORT_FORWARD`
 - `PROMETHEUS_PF_SERVICE`
 - `PROMETHEUS_PF_NAMESPACE`
+- or, via Grafana: `GRAFANA_URL`, `GRAFANA_DATASOURCE_UID`, and
+  `GRAFANA_API_TOKEN` or `GRAFANA_SESSION_COOKIE` (see below)
 
 IBM Cloud Logs:
 - `IBM_LOGS_ENDPOINT`
@@ -232,6 +234,36 @@ IBM Cloud Logs:
 Copy `.env.example` to `.env` and fill in local values. Never commit `.env`.
 The MCP server loads it automatically at startup so these tools have access
 without any secrets going into `.mcp.json`.
+
+### Querying Prometheus through Grafana instead of a port-forward
+
+If you can log into Grafana but can't (or don't want to) `kubectl
+port-forward` to Prometheus, point the Prometheus tools at Grafana's
+datasource proxy instead. Both MCP servers (`claude-ops-investigator` and
+`jvm-troubleshooter`) support it; put these in `.env`, never in `.mcp.json`:
+
+- `GRAFANA_URL` — e.g. `https://grafana.example.com`. Setting it switches to
+  Grafana mode and takes precedence over `PROMETHEUS_URL`. Must be `https`
+  unless it's `localhost`.
+- `GRAFANA_DATASOURCE_UID` — the Prometheus datasource's uid (Grafana →
+  Connections → Data sources → the datasource; its URL ends in `/edit/<uid>`).
+- One credential: `GRAFANA_API_TOKEN` (a Viewer-role service account token,
+  sent as `Authorization: Bearer`; preferred) or `GRAFANA_SESSION_COOKIE`
+  (the `grafana_session` cookie value from your logged-in browser, via
+  DevTools → Application → Cookies; expires with your session). The token
+  wins if both are set.
+
+Queries then go to
+`<GRAFANA_URL>/api/datasources/proxy/uid/<uid>/api/v1/query[_range]` — the
+same read-only PromQL calls, just proxied. The credential is redacted from
+any error the tools return and never stored as evidence.
+`prom_ensure_connection` checks reachability through the proxy in this mode
+and never starts a port-forward. Quick check:
+
+```bash
+curl -s -H "Authorization: Bearer $GRAFANA_API_TOKEN" \
+  "$GRAFANA_URL/api/datasources/proxy/uid/$GRAFANA_DATASOURCE_UID/api/v1/query?query=up" | head -c 300
+```
 
 ## No-token local tests
 

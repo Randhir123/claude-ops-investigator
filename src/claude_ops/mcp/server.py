@@ -469,7 +469,10 @@ def prom_ensure_connection() -> str:
     """Prometheus connectivity preflight/setup — reserved for your harness's
     designated entry point for this, not for general use.
 
-    No parameters. Checks Prometheus reachability at `PROMETHEUS_URL` first.
+    No parameters. Checks Prometheus reachability at `PROMETHEUS_URL` first
+    — or, when `GRAFANA_URL` is set, through Grafana's datasource proxy
+    with the configured Grafana credential (never port-forwards in that
+    mode).
 
     Each MCP client harness decides who is allowed to call this tool and
     when — e.g. only a top-level coordinating role, and only when the user

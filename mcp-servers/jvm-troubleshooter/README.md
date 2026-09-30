@@ -86,6 +86,15 @@ to identify a service/job (commonly `job`, sometimes `service` or `app`). A
 wrong value returns empty results, not an error -- confirm it against your
 own scrape config before trusting a "no data" response.
 
+### Via Grafana instead of direct Prometheus
+
+To query through Grafana's datasource proxy (no port-forward, just a Grafana
+login), set `GRAFANA_URL`, `GRAFANA_DATASOURCE_UID`, and either
+`GRAFANA_API_TOKEN` (service account token, preferred) or
+`GRAFANA_SESSION_COOKIE` (browser `grafana_session` cookie) in `.env` --
+not in `.mcp.json`. `GRAFANA_URL` takes precedence over `PROMETHEUS_URL`
+when set. See `.env.example`.
+
 ## Tools
 
 | Tool | Purpose |

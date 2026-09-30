@@ -19,7 +19,7 @@
       "env": {
         "PYTHONPATH": "${PWD}/mcp-servers/jvm-troubleshooter/src",
         "PROMETHEUS_URL": "http://localhost:9090",
-        "JVM_LABEL_KEY": "app"
+        "JVM_LABEL_KEY": "job"
       }
     }
   }

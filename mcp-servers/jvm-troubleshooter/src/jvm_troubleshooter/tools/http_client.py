@@ -7,11 +7,18 @@ anything it monitors.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 import httpx
 
 from jvm_troubleshooter.errors import ToolError, ok
+
+
+def _redact(text: str, secrets: Iterable[str] | None) -> str:
+    for secret in secrets or ():
+        if secret:
+            text = text.replace(secret, "***REDACTED***")
+    return text
 
 
 def request_json(
@@ -19,12 +26,33 @@ def request_json(
     url: str,
     *,
     params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout: float = 20.0,
+    redact: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Make a read-only HTTP request and return `ok(json)` or a structured ToolError dict."""
+    """Make a read-only HTTP request and return `ok(json)` or a structured ToolError dict.
 
+    `redact` lists credential values (a Grafana token/session cookie) that must
+    never appear in a returned error's `message` or `partialResults`.
+    """
+    result = _request_json(method, url, params=params, headers=headers, timeout=timeout)
+    if result.get("isError") and redact:
+        result["message"] = _redact(result["message"], redact)
+        if isinstance(result.get("partialResults"), str):
+            result["partialResults"] = _redact(result["partialResults"], redact)
+    return result
+
+
+def _request_json(
+    method: str,
+    url: str,
+    *,
+    params: dict[str, Any] | None,
+    headers: dict[str, str] | None,
+    timeout: float,
+) -> dict[str, Any]:
     try:
-        resp = httpx.request(method, url, params=params, timeout=timeout)
+        resp = httpx.request(method, url, params=params, headers=headers, timeout=timeout)
     except httpx.TimeoutException:
         return ToolError(
             "transient",
@@ -54,8 +82,9 @@ def request_json(
             partialResults=resp.text[:500],
             alternatives=[
                 "Verify this Prometheus endpoint doesn't require auth this client isn't configured for",
-                "If it's a Grafana-proxied datasource URL rather than a direct Prometheus endpoint, "
-                "point PROMETHEUS_URL at the real Prometheus/Thanos API instead",
+                "To query through Grafana, set GRAFANA_URL/GRAFANA_DATASOURCE_UID plus GRAFANA_API_TOKEN or "
+                "GRAFANA_SESSION_COOKIE rather than pointing PROMETHEUS_URL at a Grafana URL; "
+                "if already in Grafana mode, the credential may have expired",
             ],
         ).to_dict()
 
@@ -93,4 +122,8 @@ def request_json(
             f"Failed to parse JSON response from {url}: {exc}",
             attempted={"url": url, "method": method, "params": params},
             partialResults=resp.text[:500],
+            alternatives=[
+                "A non-JSON response usually means a login page or proxy answered instead of Prometheus -- "
+                "in Grafana mode, refresh GRAFANA_SESSION_COOKIE or switch to GRAFANA_API_TOKEN",
+            ],
         ).to_dict()

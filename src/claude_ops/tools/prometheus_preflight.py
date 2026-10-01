@@ -15,6 +15,11 @@ Environment variables:
   PROMETHEUS_AUTO_PORT_FORWARD   default "false" — must be exactly "true"
                                   (case-insensitive) before ensure_prometheus
                                   will start a port-forward process.
+  GRAFANA_URL (+ GRAFANA_DATASOURCE_UID, GRAFANA_API_TOKEN/GRAFANA_SESSION_COOKIE)
+                                  if set, Prometheus is reached through
+                                  Grafana's datasource proxy instead (see
+                                  prometheus_endpoint.py): this only checks
+                                  reachability and never port-forwards.
 
 Safety:
   - The only subprocess ever started here is `kubectl port-forward`; no
@@ -38,6 +43,8 @@ from typing import Any
 import httpx
 
 from claude_ops.errors import ToolError, ok
+from claude_ops.tools.http_client import redact_secrets
+from claude_ops.tools.prometheus_endpoint import grafana_mode_enabled, resolve_grafana_endpoint
 
 _STATUS_CONFIG_PATH = "/api/v1/status/config"
 _REACHABILITY_TIMEOUT_SECONDS = 3.0
@@ -90,6 +97,65 @@ def prom_reachable(url: str) -> bool:
         return False
 
 
+def _ensure_grafana() -> dict[str, Any]:
+    """Grafana-mode preflight: one `query=1` through the datasource proxy.
+
+    `/api/v1/status/config` isn't used here because Grafana deployments may
+    not proxy Prometheus status endpoints; an instant query is always proxied.
+    """
+    endpoint = resolve_grafana_endpoint()
+    if isinstance(endpoint, dict):
+        return endpoint
+
+    attempted = {"mode": "grafana", "prometheus_url": endpoint.base_url}
+    try:
+        resp = httpx.get(
+            f"{endpoint.base_url}/api/v1/query",
+            params={"query": "1"},
+            headers=endpoint.headers,
+            timeout=_REACHABILITY_TIMEOUT_SECONDS,
+        )
+    except httpx.RequestError as exc:
+        return ToolError(
+            "transient",
+            True,
+            redact_secrets(f"Grafana datasource proxy at {endpoint.base_url} is not reachable: {exc}", endpoint.secrets),
+            attempted=attempted,
+            alternatives=["Check GRAFANA_URL and network/VPN access to Grafana"],
+        ).to_dict()
+
+    if resp.status_code == 200:
+        return ok({
+            "reachable": True,
+            "started_port_forward": False,
+            "mode": "grafana",
+            "prometheus_url": endpoint.base_url,
+        })
+
+    if resp.status_code in (401, 403):
+        return ToolError(
+            "permission",
+            False,
+            f"Grafana rejected the credentials ({resp.status_code}) for datasource proxy {endpoint.base_url}",
+            attempted=attempted,
+            alternatives=[
+                "Refresh GRAFANA_SESSION_COOKIE (session cookies expire) or use GRAFANA_API_TOKEN",
+                "Confirm the account can query datasource GRAFANA_DATASOURCE_UID",
+            ],
+        ).to_dict()
+
+    return ToolError(
+        "transient" if resp.status_code >= 500 else "validation",
+        resp.status_code >= 500,
+        f"Grafana datasource proxy at {endpoint.base_url} returned HTTP {resp.status_code}",
+        attempted=attempted,
+        alternatives=[
+            "A 404 usually means GRAFANA_DATASOURCE_UID is wrong or not a Prometheus datasource",
+            "Retry after a short delay if this was a 5xx",
+        ],
+    ).to_dict()
+
+
 def _start_port_forward(cfg: dict[str, Any]) -> subprocess.Popen | None:
     target = f"{cfg['prometheus_pf_local_port']}:{cfg['prometheus_pf_remote_port']}"
     args = [
@@ -113,6 +179,9 @@ def ensure_prometheus(config: dict[str, Any] | None = None) -> dict[str, Any]:
     Returns `ok({"reachable": True, "started_port_forward": bool, ...})` on
     success, or a structured ToolError dict.
     """
+    if not (config or {}).get("prometheus_url") and grafana_mode_enabled():
+        return _ensure_grafana()
+
     cfg = _resolve_config(config)
     prom_url = cfg["prometheus_url"]
 

@@ -2,6 +2,8 @@
 
 Environment variables:
   PROMETHEUS_URL   base URL of the Prometheus server, e.g. http://prometheus:9090
+  GRAFANA_*        alternatively, query through Grafana's datasource proxy
+                   instead — see `prometheus_endpoint.py`
 
 Only the `/api/v1/query` and `/api/v1/query_range` read endpoints are used.
 There is no code path in this module that can mutate Prometheus or cluster
@@ -14,7 +16,6 @@ guarded against obviously huge/unbounded queries.
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any
 
@@ -22,6 +23,7 @@ from claude_ops.errors import ToolError, ok
 from claude_ops.evidence.raw_store import store_raw_evidence
 from claude_ops.evidence.summarizers import summarize_prometheus_result
 from claude_ops.tools.http_client import request_json
+from claude_ops.tools.prometheus_endpoint import PrometheusEndpoint, resolve_prometheus_endpoint
 
 _QUERY_PATH = "/api/v1/query"
 _QUERY_RANGE_PATH = "/api/v1/query_range"
@@ -39,11 +41,6 @@ _DURATION_RE = re.compile(r"\[(\d+)([smhdwy])\]")
 _SECONDS_PER_UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
 
 
-def _prometheus_base_url() -> str | None:
-    url = os.environ.get("PROMETHEUS_URL", "").strip()
-    return url.rstrip("/") or None
-
-
 _PREFLIGHT_HINT = (
     "Call prom_ensure_connection to check Prometheus reachability "
     "(and optionally start a local kubectl port-forward if PROMETHEUS_AUTO_PORT_FORWARD=true)"
@@ -58,6 +55,8 @@ def _missing_config_error(attempted: dict[str, Any]) -> dict[str, Any]:
         attempted=attempted,
         alternatives=[
             "Set the PROMETHEUS_URL environment variable to the Prometheus base URL, e.g. http://prometheus:9090",
+            "Or query through Grafana instead: set GRAFANA_URL, GRAFANA_DATASOURCE_UID and "
+            "GRAFANA_API_TOKEN/GRAFANA_SESSION_COOKIE in .env",
             _PREFLIGHT_HINT,
             "Record this as an unknowns/gap — do not report zero restarts/errors/latency because metrics could not be retrieved",
         ],
@@ -81,9 +80,9 @@ def _augment_prometheus_error(result: dict[str, Any]) -> dict[str, Any]:
     with ibm_logs_tools), so its default `alternatives` are backend-agnostic.
     This adds guidance specific to what a given failure shape usually means
     for Prometheus, without changing `errorCategory`/`isRetryable` — those
-    stay whatever `request_json` decided. Prometheus queries never carry
-    secrets in this project, so there's nothing to redact here (contrast
-    with `ibm_logs_tools`, which redacts the API key/token).
+    stay whatever `request_json` decided. In Grafana mode the request
+    carries a Grafana credential; `request_json` has already redacted it
+    from the message/partialResults via its `redact` argument.
     """
     if not result.get("isError"):
         return result
@@ -115,11 +114,42 @@ def _augment_prometheus_error(result: dict[str, Any]) -> dict[str, Any]:
         return _add_alternatives(
             result,
             "This Prometheus endpoint rejected the request as unauthenticated/unauthorized — "
-            "verify PROMETHEUS_URL points to an endpoint this read-only client can reach without extra auth",
+            "verify PROMETHEUS_URL points to an endpoint this read-only client can reach without extra auth, "
+            "or, in Grafana mode, that GRAFANA_API_TOKEN / GRAFANA_SESSION_COOKIE is current "
+            "(session cookies expire) and can read GRAFANA_DATASOURCE_UID",
             "Ask a human to configure the required access — do not attempt to add or bypass authentication yourself",
         )
 
+    if category == "unknown" and "parse JSON" in message:
+        return _add_alternatives(
+            result,
+            "A non-JSON response usually means a login page or proxy answered instead of Prometheus — "
+            "in Grafana mode, refresh GRAFANA_SESSION_COOKIE or switch to GRAFANA_API_TOKEN",
+        )
+
     return result
+
+
+def _resolve_endpoint(attempted: dict[str, Any]) -> PrometheusEndpoint | dict[str, Any]:
+    endpoint = resolve_prometheus_endpoint()
+    if endpoint is None:
+        return _missing_config_error(attempted)
+    if isinstance(endpoint, dict):
+        return {**endpoint, "attempted": {**(endpoint.get("attempted") or {}), **attempted}}
+    return endpoint
+
+
+def _query(endpoint: PrometheusEndpoint, path: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+    return _augment_prometheus_error(
+        request_json(
+            "GET",
+            f"{endpoint.base_url}{path}",
+            params=params,
+            headers=endpoint.headers or None,
+            timeout=timeout,
+            redact=endpoint.secrets or None,
+        )
+    )
 
 
 def _escape_label_value(value: str) -> str:
@@ -154,17 +184,15 @@ def _validate_promql(promql: str) -> dict[str, Any] | None:
 
 
 def _instant_query(promql: str, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
-    base_url = _prometheus_base_url()
-    if not base_url:
-        return _missing_config_error({"promql": promql})
+    endpoint = _resolve_endpoint({"promql": promql})
+    if isinstance(endpoint, dict):
+        return endpoint
 
     invalid = _validate_promql(promql)
     if invalid is not None:
         return invalid
 
-    return _augment_prometheus_error(
-        request_json("GET", f"{base_url}{_QUERY_PATH}", params={"query": promql}, timeout=timeout)
-    )
+    return _query(endpoint, _QUERY_PATH, {"query": promql}, timeout)
 
 
 def _range_query(
@@ -175,22 +203,15 @@ def _range_query(
     step: str = "60s",
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    base_url = _prometheus_base_url()
-    if not base_url:
-        return _missing_config_error({"promql": promql, "start": start, "end": end})
+    endpoint = _resolve_endpoint({"promql": promql, "start": start, "end": end})
+    if isinstance(endpoint, dict):
+        return endpoint
 
     invalid = _validate_promql(promql)
     if invalid is not None:
         return invalid
 
-    return _augment_prometheus_error(
-        request_json(
-            "GET",
-            f"{base_url}{_QUERY_RANGE_PATH}",
-            params={"query": promql, "start": start, "end": end, "step": step},
-            timeout=timeout,
-        )
-    )
+    return _query(endpoint, _QUERY_RANGE_PATH, {"query": promql, "start": start, "end": end, "step": step}, timeout)
 
 
 def _clamp_since_minutes(since_minutes: int) -> int:

@@ -9,6 +9,18 @@
       "env": {
         "PYTHONPATH": "${PWD}/src"
       }
+    },
+    "jvm-troubleshooter": {
+      "command": "python",
+      "args": [
+        "-m",
+        "jvm_troubleshooter.mcp.server"
+      ],
+      "env": {
+        "PYTHONPATH": "${PWD}/mcp-servers/jvm-troubleshooter/src",
+        "PROMETHEUS_URL": "http://localhost:9090",
+        "JVM_LABEL_KEY": "job"
+      }
     }
   }
 }

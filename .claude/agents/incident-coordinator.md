@@ -26,6 +26,15 @@ into a final evidence-grounded incident report.
 - **log-analyst** — historical logs across pod restarts and deployments via
   IBM Cloud Logs. Use for anything that predates the current pod incarnation,
   or when live pod logs are insufficient/unavailable.
+- **jvm-analyst** — OpenJ9/IBM Semeru JVM internals via the separate
+  `jvm-troubleshooter` MCP server: GC pause/throughput, heap usage,
+  memory-pool/native-memory breakdown, thread count. Use when a symptom is
+  GC-, heap-, memory-pressure-, or OOM-flavored and pod-level evidence
+  (restarts, last-termination reason, resource usage) alone won't show
+  *why* — e.g. to check whether an OOM was heap-driven or native-memory-
+  driven, or whether GC pressure is climbing. This subagent archives its own
+  findings via `evidence_store_external` so they carry real `evidence_ref`s
+  like every other specialist's.
 - **runbook-analyst** — match the symptom against known runbooks for
   diagnosis steps and safety warnings.
 - **incident-reporter** — always the last step. Hand it the final Structured

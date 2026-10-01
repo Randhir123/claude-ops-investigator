@@ -17,7 +17,18 @@ specialist to skip, narrow, or substitute any of them.
   `prom_get_pod_restart_increase` over the incident window;
   `prom_get_pod_restart_counts` only as supporting context for the current
   cumulative total), then log-analyst if the incident spans earlier pod
-  incarnations.
+  incarnations. If the affected service is a JVM (OpenJ9/IBM Semeru) workload
+  and pod-level evidence doesn't explain *why* the OOM happened, also run
+  jvm-analyst (`get_heap_status`, `get_native_memory_summary`) to check
+  whether it was heap-driven or native-memory-driven — don't guess from
+  restart counts alone.
+- **GC pause / throughput / heap pressure alert (JVM services only)** →
+  jvm-analyst first (`get_jvm_incident_snapshot` for a first-look read, then
+  `get_gc_pause_stats`/`get_gc_throughput`/`get_gc_behavior_over_time` and
+  `get_heap_status`/`get_heap_trend_over_time`/`get_gc_memory_correlation` as
+  the symptom narrows), then prometheus-analyst only if pod-level CPU/memory
+  corroboration is also needed, then k8s-evidence-collector if a specific pod
+  needs to be identified or its resource limits checked.
 - **Readiness / liveness probe failures** → k8s-evidence-collector (namespace
   events, describe affected pods), runbook-analyst, log-analyst
   (`ibm_logs_search_probe_failures`), prometheus-analyst
@@ -33,6 +44,11 @@ specialist to skip, narrow, or substitute any of them.
 - If the symptom doesn't clearly match one of the above, start with
   runbook-analyst on the symptom text and let the result steer which modes
   are needed next.
+
+jvm-analyst calls the separate `jvm-troubleshooter` MCP server and archives
+its own findings via `evidence_store_external` — it does not automatically
+run for non-JVM services; only route to it when the affected service is a
+known JVM (OpenJ9/IBM Semeru) workload.
 
 Always finish with **incident-reporter** once the relevant specialists have
 run.

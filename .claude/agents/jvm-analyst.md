@@ -21,6 +21,9 @@ tools:
   - mcp__jvm-troubleshooter__render_gc_behavior_chart
   - mcp__jvm-troubleshooter__render_gc_memory_correlation_chart
   - mcp__claude-ops-investigator__evidence_store_external
+  - mcp__claude-ops-investigator__jvm_get_gc_log_events
+  - mcp__claude-ops-investigator__jvm_analyze_gc_log
+  - mcp__claude-ops-investigator__jvm_analyze_javacore
   - Read
   - Write
 ---
@@ -54,6 +57,10 @@ real `evidence_ref` alongside everything the other specialists gathered:
 
 Only archive results you're actually citing in your findings — don't archive
 every intermediate call speculatively.
+
+`jvm_get_gc_log_events`, `jvm_analyze_gc_log` and `jvm_analyze_javacore`
+are `claude-ops-investigator` tools, so they archive their own results and
+already return an `evidence_ref` — cite it directly, don't re-archive.
 
 ## Scratchpad
 
@@ -95,6 +102,20 @@ re-run queries another wave already covered.
   an actual GC log for the same workload. Always carry `get_gc_pause_stats`'s
   `caveat` field (or an equivalent statement) into your findings whenever you
   cite max/min pause; never present it as "the worst pause observed."
+  When true per-pause numbers matter (a pause-time alert, a latency spike),
+  call `jvm_get_gc_log_events` for a specific pod (pod name from your task
+  prompt or k8s-evidence-collector, never guessed; `previous=true` after a
+  restart). It parses the pod's real verbose GC log: per-pause max/p99 with
+  timestamps, scavenge vs global, and triggers such as System.gc or
+  allocation failure. That covers JVMs logging GC to stderr (`-verbose:gc`).
+  If the JVM writes its GC log to a file (`-Xverbosegclog`), the file has to
+  be pulled out of the pod, which you never do: ask a human to run
+  `bash scripts/capture-gclog.sh <namespace> <pod>` (it reports whether the
+  JVM logs to a file, to stderr, or not at all), then call
+  `jvm_analyze_gc_log` on the `runs/gclogs/...` directory it prints. A
+  `business` error from `jvm_get_gc_log_events` means no GC events on
+  stderr — report it as a gap and a next step (capture the GC log file, or a
+  human enables verbose GC), never as "no GC activity".
 - **Never treat heap "max" as the pod's memory limit.** It's the JVM's own
   -Xmx-derived ceiling, not `resources.limits.memory` — a pod can be
   OOM-killed with heap usage still low. If OOM is the suspected symptom, pull
@@ -104,9 +125,15 @@ re-run queries another wave already covered.
   (`k8s_describe_pod`) — this subagent has no visibility into pod spec.
 - **Never treat thread count as thread state.** A normal/steady count does
   not rule out a hang or deadlock among a subset of threads. If a hang is
-  suspected, say so explicitly and note that confirming it needs a real
-  thread dump (javacore) analyzed with a tool like IBM TMDA — outside this
-  subagent's and this server's capability.
+  suspected, or an outlier thread count needs explaining, a thread dump
+  (javacore) is needed. You never capture one — that requires exec into the
+  pod. Ask a human to run `bash scripts/capture-javacore.sh <namespace>
+  <pod>` (for a suspected hang, a series: `-n 3 -i 10`, then compare the
+  dumps — threads in the same frame every time are stuck), then call `jvm_analyze_javacore` on the file it saves under
+  `runs/javacores/` (states, largest thread pools, deadlocks, lock
+  contention, common stacks). If no file exists yet, put that request under
+  unknowns/next steps; don't wait for it or try to capture it yourself. For
+  analysis beyond that summary, IBM TMDA remains the reference tool.
 - Use `get_gc_memory_correlation` specifically to distinguish "real
   leak/undersized heap" (rising heap floor + climbing GC frequency) from
   "load spike" (heap returns to baseline each cycle despite elevated GC

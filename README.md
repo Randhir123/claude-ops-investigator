@@ -446,3 +446,63 @@ pytest
 
 For a quick, standalone JVM health check outside the full incident-
 investigation flow, see `/investigate-jvm` under Slash commands above.
+
+### GC logs and thread dumps
+
+Step-by-step guide, with example output and troubleshooting:
+[`docs/jvm-gc-logs-and-thread-dumps.md`](docs/jvm-gc-logs-and-thread-dumps.md).
+
+The Prometheus-based JVM tools give counts and 5-minute averages. For the
+real thing, `claude-ops-investigator` adds three read-only tools, and two
+scripts that only a human runs:
+
+- **`jvm_get_gc_log_events(namespace, pod_name, since_minutes, previous)`**
+  reads the pod's logs (`kubectl logs`, the same read-only verb as
+  `k8s_get_pod_logs`) and parses OpenJ9 verbose GC XML: true per-pause
+  p50/p95/p99/max, scavenge vs global, the longest pauses with timestamps and
+  triggers (allocation failure, `System.gc()`, concurrent kickoff),
+  percolate/copy-failed events and GC warnings.
+  **Prerequisite:** verbose GC has to be switched on. For a Liberty service,
+  add `-verbose:gc` to its `jvm.options` (e.g. the
+  `jvmoptions-<service>-config` ConfigMap) and roll the pods. OpenJ9 writes
+  it natively to stderr, so it lands in `kubectl logs` and IBM Cloud Logs
+  without Liberty's logging in the way. Expect roughly a few MB of extra
+  log volume per pod per hour. Until it's on, the tool returns a `business`
+  error saying so.
+- **`scripts/capture-gclog.sh [-m max_files] <namespace> <pod> [container]`**
+  — **human-run only**, for JVMs that write their GC log to a *file*
+  (`-Xverbosegclog`, or `-Xloggc` as in our Liberty images; it also follows
+  a stderr redirected to a file). It reads the JVM's real setting from its command line
+  and `OPENJ9_JAVA_OPTIONS`/`IBM_JAVA_OPTIONS`/`JAVA_TOOL_OPTIONS`/
+  `JDK_JAVA_OPTIONS` (including `%pid`/`%seq` patterns and rotated files),
+  also checks `/tmp/verbosegc.*.txt` and `/opt/ibm/*verbosegc.*.txt`, and
+  streams the newest files (default 10) into `runs/gclogs/<pod>-<utc>/`.
+  It changes nothing in the pod. If the JVM only has `-verbose:gc`, it tells
+  you to use `jvm_get_gc_log_events` instead. If no verbose GC is
+  configured at all, it says so: OpenJ9 can't switch it on at runtime, so
+  that needs a `jvm.options` change and a restart. Same safeguards as the
+  javacore script.
+- **`jvm_analyze_gc_log(path)`** gives the same analysis as
+  `jvm_get_gc_log_events` for a file or a whole capture directory under
+  `runs/gclogs/` (rotated files are analyzed together). IBM GCMV remains the
+  tool for very large logs.
+- **`scripts/capture-javacore.sh [-n count] [-i seconds] <namespace> <pod> [container]`**
+  — **human-run only.** Taking a thread dump needs `kubectl exec`
+  (`jcmd <pid> Dump.java`, falling back to SIGQUIT if the image has no
+  `jcmd`, then reading the javacore file back), which agents are never
+  allowed to do. The script refuses to run without an interactive terminal,
+  shows the kubectl context and target pod, and saves each javacore to `runs/javacores/<pod>-<utc>[-n].txt`
+  (gitignored). `.claude/hooks/block_unsafe_shell.py` also denies it from
+  the agent's Bash tool. The JVM keeps running; application threads pause
+  briefly while each dump is written. Use `-n 3 -i 10` to take a series:
+  threads sitting in the same frame in every dump are stuck, not just busy.
+  Run it with `bash scripts/capture-javacore.sh …`; it also prints the IBM
+  TMDA command for the saved files.
+- **`jvm_analyze_javacore(path)`** analyzes a captured javacore (only files
+  under `runs/javacores/`): threads by state, largest thread pools (digits
+  collapsed, e.g. `Default Executor-thread-#`), deadlocks, most-contended
+  lock owners, blocked/parked threads, common stacks, and hot frames among
+  runnable threads. IBM TMDA remains the tool for deeper analysis.
+
+All three tools archive their result as evidence and return an
+`evidence_ref`; `jvm-analyst` is allowed to call them in both harnesses.

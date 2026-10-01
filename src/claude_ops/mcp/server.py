@@ -41,7 +41,7 @@ from claude_ops.tools.k8s_tools import (
     top_pods,
 )
 from claude_ops.tools.runbook_tools import get_runbook_catalog, search_runbooks
-from claude_ops.tools import prometheus_tools, prometheus_preflight, ibm_logs_tools
+from claude_ops.tools import prometheus_tools, prometheus_preflight, ibm_logs_tools, jvm_diagnostics_tools
 from claude_ops.evidence.k8s_evidence import store_k8s_tool_result
 from claude_ops.evidence.raw_store import load_raw_evidence, store_raw_evidence
 from claude_ops.evidence.summarizers import summarize_k8s_events
@@ -607,6 +607,89 @@ def ibm_logs_search_text(namespace: str, app: str, text: str, since_minutes: int
     return _json(
         ibm_logs_tools.ibm_logs_search_text(namespace=namespace, app=app, text=text, since_minutes=since_minutes, limit=limit)
     )
+
+
+@mcp.tool()
+def jvm_get_gc_log_events(
+    namespace: str,
+    pod_name: str,
+    container: str | None = None,
+    since_minutes: int = 60,
+    previous: bool = False,
+) -> str:
+    """True per-pause GC statistics for one OpenJ9 pod, parsed from its verbose GC log.
+
+    Parameters:
+    - `namespace`, `pod_name`: exact pod identity (from `k8s_list_pods`, never guessed).
+    - `container`: optional, for multi-container pods.
+    - `since_minutes`: log window to read (default 60, max 1440).
+    - `previous`: true to read the previous container instance's logs, e.g.
+      after an OOMKilled restart.
+
+    Read-only: reads the pod's logs and parses the OpenJ9 verbose GC XML the
+    JVM writes to stderr. Returns pause count, p50/p95/p99/max, per-GC-type
+    breakdown (scavenge vs global), the longest pauses with timestamps and
+    triggers (allocation failure, System.gc, concurrent kickoff), percolate/
+    copy-failed events and GC warnings. Unlike the Prometheus-based JVM
+    tools, these are real per-collection pause times, not 5-minute averages.
+
+    Requires `-verbose:gc` in the service's jvm.options (GC log to stderr).
+    If the JVM writes its GC log to a file instead (`-Xverbosegclog`), use
+    `jvm_analyze_gc_log` on files a human pulled with
+    `scripts/capture-gclog.sh`. If no GC events are found, this returns
+    `errorCategory: "business"` — report that as a gap, never as "no GC
+    activity". The result is archived as evidence
+    (`content_type: jvm.gc_log_events`).
+    """
+    return _json(jvm_diagnostics_tools.jvm_get_gc_log_events(namespace, pod_name, container, since_minutes, previous))
+
+
+@mcp.tool()
+def jvm_analyze_gc_log(path: str) -> str:
+    """True per-pause GC statistics from verbose GC log *files* a human pulled out of a pod.
+
+    Parameters:
+    - `path`: a file or a directory under `runs/gclogs/` (relative to the
+      repo root, or absolute). A directory's files — e.g. rotated
+      `-Xverbosegclog` files — are analyzed together. Anything outside
+      `runs/gclogs/` is rejected.
+
+    Read-only, local files only. Same output as `jvm_get_gc_log_events`
+    (pause p50/p95/p99/max, scavenge vs global, longest pauses with
+    triggers, percolate/copy-failed events, GC warnings), for JVMs that write
+    their GC log to a file (`-Xverbosegclog`) instead of stderr. Archived as
+    evidence (`content_type: jvm.gc_log_file_analysis`).
+
+    Agents never pull files out of pods (that needs exec access): a human
+    runs `scripts/capture-gclog.sh <namespace> <pod>`, which also tells them
+    when the JVM logs GC to stderr instead (then use `jvm_get_gc_log_events`)
+    or has no verbose GC configured at all. If nothing has been captured yet,
+    ask the human to run it — never try to run it yourself.
+    """
+    return _json(jvm_diagnostics_tools.jvm_analyze_gc_log(path))
+
+
+@mcp.tool()
+def jvm_analyze_javacore(path: str) -> str:
+    """Analyze an OpenJ9 javacore (thread dump) that a human already captured.
+
+    Parameters:
+    - `path`: a file under `runs/javacores/` (relative to the repo root, or
+      absolute). Anything outside that directory is rejected.
+
+    Read-only, local file only. Returns thread count, threads by state
+    (RUNNABLE/WAITING/BLOCKED/PARKED), the largest thread pools (names with
+    digits collapsed, e.g. "Default Executor-thread-#"), deadlocked threads,
+    most-contended lock owners, blocked/parked threads with what they wait
+    on, the most common stacks, and hot frames among runnable threads.
+    Archived as evidence (`content_type: jvm.javacore_analysis`).
+
+    Agents never capture javacores: capturing needs exec access into the
+    pod, so a human runs `scripts/capture-javacore.sh <namespace> <pod>`. If
+    the file doesn't exist, ask the human to run that script — never try to
+    run it, or any exec, yourself.
+    """
+    return _json(jvm_diagnostics_tools.jvm_analyze_javacore(path))
 
 
 @mcp.tool()

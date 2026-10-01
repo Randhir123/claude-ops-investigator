@@ -148,9 +148,13 @@ customModes:
       thread, correlation, incident-snapshot tools), plus
       claude-ops-investigator's evidence_store_external to archive findings
       into this investigation's own evidence store — jvm-troubleshooter's
-      tools do not produce an evidence_ref on their own. Never call this
-      server's own k8s_*/prom_*/ibm_logs_* tools from this mode; that's
-      other specialists' scope.
+      tools do not produce an evidence_ref on their own — and
+      claude-ops-investigator's read-only jvm_get_gc_log_events,
+      jvm_analyze_gc_log and jvm_analyze_javacore. Never call this server's
+      own k8s_*/prom_*/ibm_logs_* tools from this mode; that's other
+      specialists' scope. Never capture a thread dump, pull a GC log file or
+      run any exec yourself — a human runs scripts/capture-javacore.sh and
+      scripts/capture-gclog.sh.
     groups:
       - read
       - - edit

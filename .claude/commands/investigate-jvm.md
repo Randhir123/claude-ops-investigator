@@ -48,7 +48,17 @@ Examples:
    - Elevated GC pause/throughput concerns → `get_gc_pause_stats` /
      `get_gc_throughput` for the numbers, **plus `render_gc_behavior_chart`**
      to see whether frequency/overhead is trending, spiking, or steady across
-     the window rather than just its current value.
+     the window rather than just its current value. For the pods that stand
+     out, call `jvm_get_gc_log_events(namespace, pod_name, since_minutes)`
+     (on the `claude-ops-investigator` server) for **true per-pause**
+     max/p99 with timestamps and triggers from the pod's verbose GC log. It
+     covers GC logged to stderr (`-verbose:gc`). If it returns a `business`
+     error, the JVM may write its GC log to a file (`-Xverbosegclog`) or not
+     log GC at all: ask the human to run `bash scripts/capture-gclog.sh
+     <namespace> <pod>` (never run it yourself; it reports which case
+     applies) and analyze what it saves with
+     `jvm_analyze_gc_log("runs/gclogs/<dir>")`. Until then, report it as a
+     gap, not as "no GC activity".
    - High or rising heap usage → `get_heap_status` for the current number,
      **plus `render_heap_trend_chart`** to see the actual shape (sawtooth
      returning to baseline vs. a rising floor), and **`render_gc_memory_correlation_chart`**
@@ -73,10 +83,14 @@ Examples:
      with the deploy's Unix-epoch timestamp, to compare heap/GC/thread averages just before vs.
      just after it. This shows correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_status`. If a hang or
-     deadlock is suspected rather than just a rising count, say so explicitly
-     and recommend a real thread dump analyzed with IBM TMDA — this project's
-     tools cannot see thread state, only thread count.
+   - Elevated or climbing thread count → `get_thread_status`. Metrics show
+     only the count, not thread state. If a hang/deadlock is suspected or one
+     pod's count is an outlier, ask the human to capture a javacore with
+     `bash scripts/capture-javacore.sh <namespace> <pod>` — never run it or
+     any exec yourself — then analyze the saved file with
+     `jvm_analyze_javacore("runs/javacores/<file>.txt")` (thread states,
+     largest pools, deadlocks, lock contention, common stacks). If no file
+     exists yet, list the capture as a next step and finish the report.
 4. **A chart tool returns an image directly, not JSON** — pass `namespace`,
    `service`, and `lookback_minutes` (and `step` if you need finer/coarser
    granularity than the default `60s`) exactly as you would to the

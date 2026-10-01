@@ -41,7 +41,15 @@ $ARGUMENTS
    that signal — and render the matching chart alongside it when the
    question is about a window of time, not a single number:
    - Elevated GC pause/throughput concerns → `get_gc_pause_stats` /
-     `get_gc_throughput`, plus `render_gc_behavior_chart` for the trend.
+     `get_gc_throughput`, plus `render_gc_behavior_chart` for the trend. For
+     the pods that stand out, `jvm_get_gc_log_events(namespace, pod_name,
+     since_minutes)` (on `claude-ops-investigator`) gives true per-pause
+     max/p99 from the pod's verbose GC log on stderr. A `business` error
+     means no GC events on stderr: the JVM may log GC to a file
+     (`-Xverbosegclog`) — ask the human to run `bash scripts/capture-gclog.sh
+     <namespace> <pod>` (never run it yourself) and analyze the saved
+     directory with `jvm_analyze_gc_log` — or not log GC at all. Either way
+     it's a gap until then, not "no GC activity".
    - High or rising heap usage → `get_heap_status`, plus
      `render_heap_trend_chart` (sawtooth vs. rising floor) and
      `render_gc_memory_correlation_chart` (real leak vs. load spike) — read
@@ -60,9 +68,12 @@ $ARGUMENTS
      `get_before_after_deploy_comparison` with the deploy's Unix-epoch
      timestamp. Correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_status`. If a hang or
-     deadlock is suspected, say so explicitly and recommend a real thread
-     dump analyzed with IBM TMDA — this server cannot see thread state.
+   - Elevated or climbing thread count → `get_thread_status` (count only,
+     not state). If a hang/deadlock is suspected or one pod is an outlier,
+     ask the human to run `bash scripts/capture-javacore.sh <namespace>
+     <pod>` — never run it or any exec yourself — then call
+     `jvm_analyze_javacore("runs/javacores/<file>.txt")`. If no file exists
+     yet, list the capture as a next step and finish the report.
 4. **A chart tool returns an image directly, not JSON.** If the underlying
    query returned no data points, the chart tool returns a structured error
    (`errorCategory: "business"`, "nothing to chart") instead of a blank

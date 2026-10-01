@@ -309,6 +309,8 @@ def test_analyze_javacore_success_stores_evidence(javacore_dir, evidence_to_tmp)
     assert result["data"]["content_type"] == "jvm.javacore_analysis"
     assert "5 threads" in result["data"]["summary"]
     assert "DEADLOCK among 2 threads" in result["data"]["summary"]
+    # pod name comes from the capture script's file naming: <pod>-<utc>.txt
+    assert "run scripts/cleanup-javacores.sh <namespace> tsq-abc" in result["data"]["summary"]
 
 
 @pytest.mark.parametrize(
@@ -341,3 +343,163 @@ def test_analyze_javacore_rejects_non_javacore_file(javacore_dir):
 
     assert result["errorCategory"] == "validation"
     assert "doesn't look like an OpenJ9 javacore" in result["message"]
+
+
+# --- GC trigger for the end of a concurrent global mark -------------------------------
+
+# Same shape as a real OpenJ9 gencon log: a concurrent scavenge cut short, then one
+# exclusive block that finishes the scavenge and the concurrent global mark.
+CONCURRENT_FINAL_LOG = """\
+<concurrent-end id="1" type="scavenge" contextid="0" timestamp="2026-10-01T00:05:25.477" terminationReason="termination requested by GC">
+</concurrent-end>
+<exclusive-start id="2" timestamp="2026-10-01T00:05:25.477" intervalms="63.5">
+</exclusive-start>
+<concurrent-global-final id="3" timestamp="2026-10-01T00:05:25.477" contextid="9" intervalms="49073.4" >
+  <concurrent-trace-info reason="card cleaning threshold reached" tracedByMutators="1" tracedByHelpers="2" cardsCleaned="3" workStackOverflowCount="0" />
+</concurrent-global-final>
+<gc-start id="4" type="scavenge" contextid="1" timestamp="2026-10-01T00:05:25.479">
+</gc-start>
+<gc-end id="5" type="scavenge" contextid="1" durationms="705.4" timestamp="2026-10-01T00:05:26.184">
+</gc-end>
+<gc-start id="6" type="global" contextid="9" timestamp="2026-10-01T00:05:26.187">
+</gc-start>
+<gc-end id="7" type="global" contextid="9" durationms="492.3" timestamp="2026-10-01T00:05:26.679">
+</gc-end>
+<exclusive-end id="8" timestamp="2026-10-01T00:05:26.680" durationms="1202.789" />
+"""
+
+
+def test_parse_verbose_gc_attributes_concurrent_global_final_trigger():
+    parsed = jvm_diagnostics_tools.parse_verbose_gc(CONCURRENT_FINAL_LOG)
+
+    assert parsed["longest_pauses"][0] == {
+        "timestamp": "2026-10-01T00:05:26.680",
+        "duration_ms": 1202.789,
+        "gc_types": ["scavenge", "global"],
+        "trigger": "concurrent-global-final:card cleaning threshold reached",
+    }
+    assert parsed["triggers"] == {"concurrent-global-final:card cleaning threshold reached": 1}
+    assert parsed["notable_events"] == {"concurrent-end:scavenge:termination requested by GC": 1}
+
+
+# --- javacore series comparison ---------------------------------------------------------
+
+
+def _javacore(second: int, threads: list[tuple]) -> str:
+    """threads: (name, id, state, frames, block_line_or_None)"""
+    lines = [
+        '1TISIGINFO     Dump Requested By User (00100000) Through com.ibm.jvm.Dump.javaDumpToFile',
+        f"1TIDATETIME    Date: 2026/10/01 at 01:30:{second:02d}:250",
+    ]
+    for name, tid, state, frames, block in threads:
+        lines.append(f'3XMTHREADINFO      "{name}" J9VMThread:0x1, omrthread_t:0x2, java/lang/Thread:0x3, state:{state}, prio=5')
+        lines.append(f"3XMJAVALTHREAD            (java/lang/Thread getId:{tid}, isDaemon:true)")
+        if block:
+            lines.append(block)
+        lines.extend(f"4XESTACKTRACE                at {f}" for f in frames)
+    return "\n".join(lines) + "\n"
+
+
+SPIN = ["com/example/Spin.loop(Spin.java:5)", "com/example/Svc.run(Svc.java:9)"]
+EPOLL = ["sun/nio/ch/EPoll.wait(Native Method)", "sun/nio/ch/EPollSelectorImpl.doSelect(EPollSelectorImpl.java:118)"]
+WAIT = ["java/lang/Object.waitImpl(Native Method)", "java/lang/Object.wait(Object.java:219)"]
+BLOCK = '3XMTHREADBLOCK     Blocked on: java/lang/Object@0x00000000F0001000 Owned by: "worker-hot" (J9VMThread:0x9, java/lang/Thread:0x8)'
+
+
+def _series_dump(second: int, busy_frame: str, tsd_number: int, tsd_id: str) -> str:
+    return _javacore(second, [
+        ("worker-hot", "0x10", "R", SPIN, None),
+        ("worker-busy", "0x11", "R", [busy_frame, "com/example/Busy.run(Busy.java:1)"], None),
+        ("s0-io-1", "0x12", "R", EPOLL, None),
+        ("lock-waiter", "0x13", "B", ["com/example/Cache.get(Cache.java:10)"], BLOCK),
+        ("Default Executor-thread-5", "0x14", "CW", WAIT, None),
+        (f"tsdquery-rest-1-thread-{tsd_number}", tsd_id, "P", ["jdk/internal/misc/Unsafe.park(Native Method)"], None),
+    ])
+
+
+SERIES = [
+    ("tsq-1.txt", _series_dump(0, "com/example/Busy.a(Busy.java:1)", 1000, "0x20")),
+    ("tsq-2.txt", _series_dump(10, "com/example/Busy.b(Busy.java:2)", 1200, "0x21")),
+    ("tsq-3.txt", _series_dump(20, "com/example/Busy.c(Busy.java:3)", 1400, "0x22")),
+]
+
+
+def test_compare_javacores_separates_stuck_blocked_idle_and_busy():
+    # Passed out of order on purpose: dumps are ordered by their own timestamps.
+    parsed = jvm_diagnostics_tools.compare_javacores([SERIES[2], SERIES[0], SERIES[1]])
+
+    assert [d["file"] for d in parsed["dumps"]] == ["tsq-1.txt", "tsq-2.txt", "tsq-3.txt"]
+    assert parsed["span_seconds"] == 20.0
+    assert parsed["threads_in_every_dump"] == 5
+    assert parsed["stuck_runnable"] == [{"threads": 1, "top_frames": SPIN, "examples": ["worker-hot"]}]
+    assert parsed["blocked_throughout"] == [{
+        "name": "lock-waiter",
+        "waiting_on": "java/lang/Object@0x00000000F0001000",
+        "owner": "worker-hot",
+        "top_frame": "com/example/Cache.get(Cache.java:10)",
+    }]
+    assert parsed["idle_io_threads"] == 1  # EPoll.wait is idle, not stuck
+    assert parsed["waiting_unchanged_threads"] == 1
+    churn = parsed["thread_churn"][0]
+    assert churn["pool"] == "tsdquery-rest-1-thread-#"
+    assert churn["max_number"] == [1000, 1200, 1400]
+    assert churn["threads_created"] == 400
+    assert churn["threads_created_per_second"] == 20.0
+    assert parsed["threads_appeared"] == 1
+    assert parsed["threads_disappeared"] == 1
+
+
+def test_jvm_compare_javacores_with_glob_stores_evidence(javacore_dir, evidence_to_tmp):
+    for name, text in SERIES:
+        (javacore_dir / name).write_text(text)
+
+    result = jvm_diagnostics_tools.jvm_compare_javacores(["runs/javacores/tsq-*.txt"])
+
+    assert result["isError"] is False
+    assert result["data"]["content_type"] == "jvm.javacore_comparison"
+    summary = result["data"]["summary"]
+    assert "3 javacores over 20s" in summary
+    assert "1 RUNNABLE with an unchanged non-idle stack" in summary
+    assert "1 BLOCKED throughout" in summary
+    assert "largest stuck group: 1 threads at com/example/Spin.loop(Spin.java:5)" in summary
+    assert "'tsdquery-rest-1-thread-#' created 400 threads (~20.0/s)" in summary
+    # file names without the capture script's timestamp still get a generic reminder
+    assert "run scripts/cleanup-javacores.sh <namespace> <pod>" in summary
+
+
+def test_cleanup_reminder_names_each_pod_once():
+    reminder = jvm_diagnostics_tools._cleanup_reminder([
+        "tsq-57b6-k8xsl-20261001T013000Z-1.txt",
+        "tsq-57b6-k8xsl-20261001T013030Z-2.txt",
+        "other-pod-20261001T013100Z.txt",
+    ])
+    assert reminder.endswith(
+        "run scripts/cleanup-javacores.sh <namespace> other-pod / scripts/cleanup-javacores.sh <namespace> tsq-57b6-k8xsl"
+    )
+
+
+@pytest.mark.parametrize(
+    "paths, expected",
+    [
+        (["runs/javacores/tsq-1.txt"], "needs 2 to 10"),
+        (["runs/javacores/tsq-1.txt", "/etc/hosts"], "Only files under"),
+        (["runs/javacores/nomatch-*.txt"], "No files match"),
+    ],
+)
+def test_jvm_compare_javacores_validation(javacore_dir, paths, expected):
+    (javacore_dir / "tsq-1.txt").write_text(SERIES[0][1])
+
+    result = jvm_diagnostics_tools.jvm_compare_javacores(paths)
+
+    assert result["errorCategory"] == "validation"
+    assert expected in result["message"]
+
+
+def test_jvm_compare_javacores_rejects_non_javacore(javacore_dir):
+    (javacore_dir / "tsq-1.txt").write_text(SERIES[0][1])
+    (javacore_dir / "notes.txt").write_text("not a javacore\n")
+
+    result = jvm_diagnostics_tools.jvm_compare_javacores(["runs/javacores/tsq-1.txt", "runs/javacores/notes.txt"])
+
+    assert result["errorCategory"] == "validation"
+    assert "not an OpenJ9 javacore" in result["message"]

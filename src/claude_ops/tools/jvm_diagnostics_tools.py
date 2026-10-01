@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +148,17 @@ def parse_verbose_gc(text: str) -> dict[str, Any]:
                     current["trigger"] = trigger
             elif tag == "concurrent-kickoff":
                 triggers["concurrent-kickoff"] += 1
+            elif tag == "concurrent-global-final":
+                # Stop-the-world end of a concurrent global mark (gencon); the
+                # reason follows in <concurrent-trace-info reason="...">.
+                if current is not None and current["trigger"] is None:
+                    current["trigger"] = "concurrent-global-final"
+            elif tag == "concurrent-trace-info":
+                if current is not None and current["trigger"] == "concurrent-global-final" and attrs.get("reason"):
+                    current["trigger"] = f"concurrent-global-final:{attrs['reason']}"
+            elif tag == "concurrent-end" and attrs.get("terminationReason"):
+                # e.g. a concurrent scavenge cut short ("termination requested by GC")
+                events[f"concurrent-end:{attrs.get('type', 'unknown')}:{attrs['terminationReason']}"] += 1
             elif tag in ("percolate-collect", "copy-failed"):
                 events[f"{tag}:{attrs.get('reason') or attrs.get('type') or 'unknown'}"] += 1
             elif tag == "warning":
@@ -163,6 +175,8 @@ def parse_verbose_gc(text: str) -> dict[str, Any]:
                     current = None
                     continue
                 block = current or {"start": None, "types": [], "trigger": None}
+                if (block["trigger"] or "").startswith("concurrent-global-final"):
+                    triggers[block["trigger"]] += 1
                 pauses.append({
                     "timestamp": attrs.get("timestamp") or block["start"],
                     "duration_ms": duration,
@@ -332,8 +346,11 @@ _STATE_NAMES = {
 }
 
 
-def parse_javacore(text: str) -> dict[str, Any]:
-    """Summarize an OpenJ9 javacore: thread states, pools, lock contention, deadlocks, hot stacks."""
+_JAVA_THREAD_ID_RE = re.compile(r"^3XMJAVALTHREAD\s+\(java/lang/Thread getId:(?P<id>0x[0-9A-Fa-f]+)")
+
+
+def _parse_javacore_threads(text: str) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
+    """Return (header, threads, deadlocked thread names) from an OpenJ9 javacore."""
     threads: list[dict[str, Any]] = []
     header: dict[str, str] = {}
     deadlocked: list[str] = []
@@ -351,10 +368,12 @@ def parse_javacore(text: str) -> dict[str, Any]:
             header["deadlock"] = "detected"
 
         if match := _THREAD_RE.match(line):
-            current = {"name": match["name"], "state": match["state"], "block": None, "frames": []}
+            current = {"name": match["name"], "id": None, "state": match["state"], "block": None, "frames": []}
             threads.append(current)
         elif line.split(maxsplit=1)[:1] == ["3XMTHREADINFO"]:
             current = None  # e.g. "Anonymous native thread": don't attach its frames to the previous thread
+        elif current is not None and (match := _JAVA_THREAD_ID_RE.match(line)):
+            current["id"] = match["id"]
         elif current is not None and (match := _BLOCK_RE.match(line)):
             current["block"] = {"kind": match["kind"], "object": match["obj"], "owner": match["owner"]}
         elif current is not None and (match := _FRAME_RE.match(line)):
@@ -362,6 +381,13 @@ def parse_javacore(text: str) -> dict[str, Any]:
         elif match := _DEADLOCK_THREAD_RE.match(line):
             if match["name"] not in deadlocked:
                 deadlocked.append(match["name"])
+
+    return header, threads, deadlocked
+
+
+def parse_javacore(text: str) -> dict[str, Any]:
+    """Summarize an OpenJ9 javacore: thread states, pools, lock contention, deadlocks, hot stacks."""
+    header, threads, deadlocked = _parse_javacore_threads(text)
 
     states = Counter(_STATE_NAMES.get(t["state"], t["state"]) for t in threads)
     pools = Counter(_DIGITS_RE.sub("#", t["name"]) for t in threads)
@@ -388,6 +414,18 @@ def parse_javacore(text: str) -> dict[str, Any]:
     }
 
 
+_CAPTURED_NAME_RE = re.compile(r"^(?P<pod>.+?)-\d{8}T\d{6}Z(?:-\d+)?\.txt$")
+
+
+def _cleanup_reminder(file_names: list[str]) -> str:
+    """Remind the human that captured javacores are still in the pod (agents can't delete them)."""
+    pods = sorted({m["pod"] for name in file_names if (m := _CAPTURED_NAME_RE.match(name))})
+    commands = " / ".join(f"scripts/cleanup-javacores.sh <namespace> {pod}" for pod in pods) or (
+        "scripts/cleanup-javacores.sh <namespace> <pod>"
+    )
+    return f"REMINDER for the human: the javacore files are still in the pod; once done, run {commands}"
+
+
 def _javacore_summary(name: str, parsed: dict[str, Any]) -> str:
     parts = [f"{name}: {parsed['thread_count']} threads"]
     if parsed["threads_by_state"]:
@@ -400,6 +438,7 @@ def _javacore_summary(name: str, parsed: dict[str, Any]) -> str:
     if parsed["most_contended_lock_owners"]:
         top = parsed["most_contended_lock_owners"][0]
         parts.append(f"most contended lock owner '{top['owner']}' with {top['waiters']} waiters")
+    parts.insert(1, _cleanup_reminder([name]))  # early: summaries are truncated at 1000 chars
     return "; ".join(parts)
 
 
@@ -436,5 +475,214 @@ def jvm_analyze_javacore(path: str) -> dict[str, Any]:
         raw=parsed,
         summary=_javacore_summary(resolved.name, parsed),
         metadata={"file": str(resolved.relative_to(PROJECT_ROOT)), "source": "javacore"},
+    )
+    return ok(record.to_dict())
+
+
+# --- javacore series comparison ---------------------------------------------------
+
+_MAX_COMPARE_DUMPS = 10
+_STACK_DEPTH = 5
+# Top frames where a RUNNABLE thread is really idle, waiting for I/O or events.
+_IDLE_TOP_FRAMES = (
+    "sun/nio/ch/EPoll.wait",
+    "sun/nio/ch/Net.accept",
+    "sun/nio/ch/Net.poll",
+    "java/net/PlainSocketImpl.socketAccept",
+    "sun/nio/fs/LinuxWatchService.poll",
+    "sun/nio/ch/KQueue.poll",
+)
+_DUMP_TIME_RE = re.compile(r"(\d{4}/\d{2}/\d{2}) at (\d{2}:\d{2}:\d{2})(?::(\d{1,3}))?")
+_LAST_NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
+
+
+def _dump_time(header: dict[str, str]) -> datetime | None:
+    match = _DUMP_TIME_RE.search(header.get("dump_time", ""))
+    if not match:
+        return None
+    stamp = datetime.strptime(f"{match[1]} {match[2]}", "%Y/%m/%d %H:%M:%S")
+    return stamp.replace(microsecond=int(match[3] or 0) * 1000)
+
+
+def _is_idle(frames: list[str]) -> bool:
+    return bool(frames) and frames[0].startswith(_IDLE_TOP_FRAMES)
+
+
+def compare_javacores(texts: list[tuple[str, str]]) -> dict[str, Any]:
+    """Compare a series of javacores from one JVM, taken some seconds apart.
+
+    `texts` is a list of (name, javacore text). Dumps are ordered by their own
+    dump time. A thread is matched across dumps by its Java thread ID (falling
+    back to its name).
+    """
+    dumps = []
+    for name, text in texts:
+        header, threads, deadlocked = _parse_javacore_threads(text)
+        dumps.append({
+            "file": name,
+            "time": _dump_time(header),
+            "threads": {(t["id"] or t["name"]): t for t in threads},
+            "deadlocked": deadlocked,
+        })
+    dumps.sort(key=lambda d: (d["time"] is None, d["time"] or datetime.min))
+
+    keys_in_all = set.intersection(*(set(d["threads"]) for d in dumps))
+    stuck: dict[tuple, dict[str, Any]] = {}
+    blocked_throughout = []
+    idle_io = waiting_unchanged = 0
+    for key in keys_in_all:
+        seen = [d["threads"][key] for d in dumps]
+        stacks = {tuple(t["frames"][:_STACK_DEPTH]) for t in seen}
+        states = [t["state"] for t in seen]
+        if len(stacks) != 1:
+            continue  # moved between dumps: busy, not stuck
+        frames = next(iter(stacks))
+        if _is_idle(list(frames)):
+            idle_io += 1
+        elif all(s == "B" for s in states):
+            last = seen[-1]
+            blocked_throughout.append({
+                "name": last["name"],
+                "waiting_on": (last["block"] or {}).get("object"),
+                "owner": (last["block"] or {}).get("owner"),
+                "top_frame": frames[0] if frames else None,
+            })
+        elif all(s == "R" for s in states) and frames:
+            group = stuck.setdefault(frames, {"threads": 0, "top_frames": list(frames), "examples": []})
+            group["threads"] += 1
+            if len(group["examples"]) < 5:
+                group["examples"].append(seen[-1]["name"])
+        else:
+            waiting_unchanged += 1  # waiting/parked on the same thing: normal for idle pool threads
+
+    times = [d["time"] for d in dumps]
+    span = (times[-1] - times[0]).total_seconds() if all(times) and len(times) > 1 else None
+
+    pools: dict[str, dict[str, Any]] = {}
+    for i, d in enumerate(dumps):
+        for t in d["threads"].values():
+            match = _LAST_NUMBER_RE.search(t["name"])
+            if not match:
+                continue
+            key = t["name"][: match.start()] + "#" + t["name"][match.end():]
+            pool = pools.setdefault(key, {"pool": key, "counts": [0] * len(dumps), "max_number": [None] * len(dumps)})
+            pool["counts"][i] += 1
+            number = int(match[1])
+            if pool["max_number"][i] is None or number > pool["max_number"][i]:
+                pool["max_number"][i] = number
+    churn = []
+    for pool in pools.values():
+        first, last = pool["max_number"][0], pool["max_number"][-1]
+        if first is None or last is None or last <= first:
+            continue
+        created = last - first
+        churn.append({
+            **pool,
+            "threads_created": created,
+            "threads_created_per_second": round(created / span, 2) if span else None,
+        })
+    churn.sort(key=lambda p: -p["threads_created"])
+
+    first_keys, last_keys = set(dumps[0]["threads"]), set(dumps[-1]["threads"])
+    return {
+        "dumps": [
+            {
+                "file": d["file"],
+                "dump_time": d["time"].isoformat(timespec="milliseconds") if d["time"] else None,
+                "thread_count": len(d["threads"]),
+                "threads_by_state": dict(Counter(
+                    _STATE_NAMES.get(t["state"], t["state"]) for t in d["threads"].values()
+                ).most_common()),
+                "deadlocked_threads": d["deadlocked"],
+            }
+            for d in dumps
+        ],
+        "span_seconds": span,
+        "threads_in_every_dump": len(keys_in_all),
+        "stuck_runnable": sorted(stuck.values(), key=lambda g: -g["threads"])[:_TOP_N * 2],
+        "blocked_throughout": blocked_throughout[: _TOP_N * 5],
+        "idle_io_threads": idle_io,
+        "waiting_unchanged_threads": waiting_unchanged,
+        "thread_churn": churn[:_TOP_N],
+        "threads_appeared": len(last_keys - first_keys),
+        "threads_disappeared": len(first_keys - last_keys),
+    }
+
+
+def _compare_summary(parsed: dict[str, Any]) -> str:
+    n = len(parsed["dumps"])
+    span = f" over {parsed['span_seconds']:.0f}s" if parsed["span_seconds"] else ""
+    stuck = sum(g["threads"] for g in parsed["stuck_runnable"])
+    parts = [
+        f"{n} javacores{span}: {parsed['threads_in_every_dump']} threads in every dump; "
+        f"{stuck} RUNNABLE with an unchanged non-idle stack (possibly stuck or spinning), "
+        f"{len(parsed['blocked_throughout'])} BLOCKED throughout, "
+        f"{parsed['idle_io_threads']} idle I/O, {parsed['waiting_unchanged_threads']} waiting unchanged"
+    ]
+    if parsed["stuck_runnable"]:
+        top = parsed["stuck_runnable"][0]
+        parts.append(f"largest stuck group: {top['threads']} threads at {top['top_frames'][0]}")
+    if any(d["deadlocked_threads"] for d in parsed["dumps"]):
+        parts.append("DEADLOCK reported in at least one dump")
+    if parsed["thread_churn"]:
+        top = parsed["thread_churn"][0]
+        rate = f" (~{top['threads_created_per_second']}/s)" if top["threads_created_per_second"] else ""
+        parts.append(f"most churn: '{top['pool']}' created {top['threads_created']} threads{rate}")
+    parts.append(f"{parsed['threads_appeared']} threads appeared, {parsed['threads_disappeared']} disappeared")
+    parts.insert(1, _cleanup_reminder([d["file"] for d in parsed["dumps"]]))  # early: summaries are truncated
+    return "; ".join(parts)
+
+
+def jvm_compare_javacores(paths: list[str]) -> dict[str, Any]:
+    """Compare 2-10 javacores from the same JVM that a human captured into runs/javacores/."""
+    attempted = {"paths": paths}
+    hint = "Run scripts/capture-javacore.sh -n 3 -i 10 <namespace> <pod>; it saves under runs/javacores/."
+
+    expanded: list[str] = []
+    for path in paths or []:
+        if any(ch in path for ch in "*?["):
+            base = Path(path) if Path(path).is_absolute() else PROJECT_ROOT / path
+            matches = sorted(str(p) for p in base.parent.glob(base.name))
+            if not matches:
+                return ToolError("validation", False, f"No files match {path}.", attempted=attempted,
+                                 alternatives=[hint]).to_dict()
+            expanded.extend(matches)
+        else:
+            expanded.append(path)
+
+    if not 2 <= len(expanded) <= _MAX_COMPARE_DUMPS:
+        return ToolError(
+            "validation",
+            False,
+            f"Compare needs 2 to {_MAX_COMPARE_DUMPS} javacores; got {len(expanded)}.",
+            attempted=attempted,
+            alternatives=[hint, "For a single dump, use jvm_analyze_javacore"],
+        ).to_dict()
+
+    texts: list[tuple[str, str]] = []
+    for path in expanded:
+        resolved = _resolve_confined(path, JAVACORE_DIR, hint)
+        if isinstance(resolved, dict):
+            return resolved
+        if not resolved.is_file() or resolved.stat().st_size > _MAX_JAVACORE_BYTES:
+            return ToolError("validation", False, f"{resolved.name} is not a file under the size limit.",
+                             attempted=attempted).to_dict()
+        texts.append((resolved.name, resolved.read_text(errors="replace")))
+
+    parsed = compare_javacores(texts)
+    if any(d["thread_count"] == 0 for d in parsed["dumps"]):
+        return ToolError(
+            "validation",
+            False,
+            "At least one file has no 3XMTHREADINFO thread entries — not an OpenJ9 javacore.",
+            attempted=attempted,
+            partialResults={"dumps": parsed["dumps"]},
+        ).to_dict()
+
+    record = store_raw_evidence(
+        content_type="jvm.javacore_comparison",
+        raw=parsed,
+        summary=_compare_summary(parsed),
+        metadata={"files": [name for name, _ in texts], "source": "javacore series"},
     )
     return ok(record.to_dict())

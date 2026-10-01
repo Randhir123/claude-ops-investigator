@@ -12,7 +12,7 @@ every GC pause and every thread.
 | Decide which pod to look at | Agent (`/investigate-jvm`, `/investigate-incident`) or you | Read-only metrics |
 | Read GC output from the container log | Agent (`jvm_get_gc_log_events`) | `kubectl logs` is read-only |
 | Copy a GC log **file** or take a **thread dump** | **You**, with `scripts/capture-gclog.sh` / `scripts/capture-javacore.sh` | Needs `kubectl exec`, which agents never run |
-| Analyze what you captured | Agent (`jvm_analyze_gc_log`, `jvm_analyze_javacore`) | Reads local files under `runs/` only |
+| Analyze what you captured | Agent (`jvm_analyze_gc_log`, `jvm_analyze_javacore`, `jvm_compare_javacores`) | Reads local files under `runs/` only |
 
 The capture scripts only work in **your own terminal**. They refuse to run
 without an interactive terminal, so `! script…` inside Claude Code and Bob's
@@ -83,7 +83,7 @@ JVM is mid-write; the analyzer ignores it.
 
 Ask the agent:
 
-> run jvm_analyze_gc_log on runs/gclogs/time-series-query-57b6bd684f-k8xsl-20260930T234919Z
+> run `jvm_analyze_gc_log` on `runs/gclogs/time-series-query-57b6bd684f-k8xsl-20260930T234919Z`
 
 You get:
 - **Pause statistics:** count, p50/p95/p99/**true max**, broken down by
@@ -125,17 +125,14 @@ same frame in every dump is **stuck**; one that moves between dumps is
 
 The javacores stay in the pod, usually as
 `/opt/ibm/wlp/output/defaultServer/javacore.<date>.<time>.<pid>.<seq>.txt`, a
-few MB each. They disappear on restart. To delete them sooner:
-
-```bash
-kubectl exec -n si <pod> -- sh -c 'rm -f /opt/ibm/wlp/output/defaultServer/javacore.*.txt'
-```
+few MB each, until the pod restarts. See [Clean up](#4-clean-up) below. The
+capture script and the agent both remind you.
 
 ### Analyze
 
 Ask the agent:
 
-> run jvm_analyze_javacore on runs/javacores/<pod>-<utc>.txt
+> run `jvm_analyze_javacore` on `runs/javacores/<pod>-<utc>.txt`
 
 You get:
 - Threads by state.
@@ -157,10 +154,67 @@ How to read it:
 - **Deadlocks or many threads blocked on one owner** are the real red flags.
   The report lists them directly.
 
+### Compare a series
+
+One dump is a snapshot; a series shows what *changes*. Capture 3–5 dumps a
+few seconds apart from the same pod, then ask the agent to compare them:
+
+```bash
+scripts/capture-javacore.sh -n 3 -i 10 si <pod>
+```
+
+> run `jvm_compare_javacores` on `runs/javacores/<pod>-<date>*.txt`
+
+It matches each thread across dumps by its Java thread ID and reports:
+
+| Field | Meaning | What to do |
+|---|---|---|
+| `stuck_runnable` | RUNNABLE in every dump with the same top 5 frames, grouped by stack | The prime suspects for a hang or a hot loop. Look at the top frame. |
+| `blocked_throughout` | BLOCKED in every dump, with the lock and its owner | Follow the owner: what is *it* doing? |
+| `idle_io_threads` | Same stack every time, but idle in `EPoll.wait`, `accept` and similar | Normal; network selectors waiting for data |
+| `waiting_unchanged_threads` | Waiting or parked on the same thing in every dump | Normal for idle pool threads |
+| `thread_churn` | Per pool: how far the thread-number suffix advanced, and threads created per second | A high rate means threads are created per task instead of reused |
+| `threads_appeared` / `threads_disappeared` | Thread IDs present in the last dump but not the first, and vice versa | Short-lived threads; see churn |
+
+Pick the interval to suit the question:
+
+| Goal | Series |
+|---|---|
+| Find stuck threads during a stall or latency spike | `-n 5 -i 10`, *while it's happening* |
+| Measure thread churn | `-n 3 -i 30`, any time |
+| Baseline under normal load | `-n 3 -i 60` |
+
+Each dump briefly pauses the JVM and leaves a file of a few MB in the pod, so
+keep a series to 3–5 dumps.
+
 For deeper analysis: `java -Xmx2g -jar ~/tools/tmda/jca.jar <javacore.txt>`
 (IBM TMDA). The script prints this command too.
 
-## 4. Doing it by hand
+## 4. Clean up
+
+Once you've analyzed the javacores, remove them from the pod:
+
+```bash
+scripts/cleanup-javacores.sh si <pod>         # the dumps capture-javacore.sh took from this pod
+scripts/cleanup-javacores.sh -a si <pod>      # every javacore in the JVM's dump folders
+```
+
+- **By default** it removes exactly the javacores `capture-javacore.sh` took
+  from that pod. The capture script records their paths in
+  `runs/javacores/.in-pod/<namespace>_<pod>.txt`.
+- **`-a`** finds every `javacore*.txt` in the JVM's dump folders. Use it for
+  dumps taken before that record existed, or by hand. It also lists
+  javacores the JVM wrote on its own (e.g. on an `OutOfMemoryError`), so
+  check the list before saying yes.
+- **It shows the files and sizes and asks once** before deleting. `-y` skips
+  the question. It only ever deletes files named `javacore*.txt`, then checks
+  they're gone.
+- **Human-run only,** like the capture scripts. Agents tell you to run it but
+  never run it themselves.
+
+GC log captures only read files, so there's nothing to clean up after them.
+
+## 5. Doing it by hand
 
 If the scripts aren't available, these are the same steps. Run them yourself,
 never through an agent.

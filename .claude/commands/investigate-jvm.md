@@ -89,8 +89,15 @@ Examples:
      `bash scripts/capture-javacore.sh <namespace> <pod>` — never run it or
      any exec yourself — then analyze the saved file with
      `jvm_analyze_javacore("runs/javacores/<file>.txt")` (thread states,
-     largest pools, deadlocks, lock contention, common stacks). If no file
-     exists yet, list the capture as a next step and finish the report.
+     largest pools, deadlocks, lock contention, common stacks). For a
+     suspected hang, slowdown or thread churn, ask for a series instead
+     (`-n 3 -i 10`) and compare it with
+     `jvm_compare_javacores(["runs/javacores/<pod>-<date>*.txt"])`: threads
+     stuck in the same frame in every dump, threads BLOCKED throughout, and
+     per-pool thread creation rates. If no file exists yet, list the capture
+     as a next step and finish the report. After analyzing javacores, always
+     list "remove them from the pod: `bash scripts/cleanup-javacores.sh
+     <namespace> <pod>`" as a next step for the human — never run it yourself.
 4. **A chart tool returns an image directly, not JSON** — pass `namespace`,
    `service`, and `lookback_minutes` (and `step` if you need finer/coarser
    granularity than the default `60s`) exactly as you would to the

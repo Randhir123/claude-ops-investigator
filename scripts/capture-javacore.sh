@@ -15,7 +15,9 @@
 #      SIGQUIT (kill -3) if jcmd isn't in the image. Either way OpenJ9 keeps
 #      running; application threads pause briefly while the dump is written,
 #   3. streams the new javacore back with `cat` (kubectl cp would need tar).
-# The javacore files are left in the pod (typically a few MB each).
+# The javacore files are left in the pod (typically a few MB each); their paths
+# are recorded in runs/javacores/.in-pod/<namespace>_<pod>.txt so that
+# scripts/cleanup-javacores.sh can remove exactly those afterwards.
 #
 # Take several dumps a few seconds apart (-n/-i) to tell threads that are
 # stuck (same frame in every dump) from threads that are just busy.
@@ -145,12 +147,15 @@ exit 4
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT_DIR="$REPO_ROOT/runs/javacores"
-mkdir -p "$OUT_DIR"
+# Records which javacores this script left in the pod, for cleanup-javacores.sh.
+IN_POD_LIST="$OUT_DIR/.in-pod/${NAMESPACE}_${POD}.txt"
+mkdir -p "$OUT_DIR/.in-pod"
 SAVED=()
 
 for ((n = 1; n <= COUNT; n++)); do
   echo "Triggering javacore $n/$COUNT..."
   REMOTE_PATH=$(kubectl exec "${EXEC_ARGS[@]}" -- sh -c "$REMOTE_SCRIPT")
+  echo "$REMOTE_PATH" >> "$IN_POD_LIST"
   SUFFIX=""
   if [ "$COUNT" -gt 1 ]; then SUFFIX="-$n"; fi
   OUT_FILE="$OUT_DIR/${POD}-$(date -u +%Y%m%dT%H%M%SZ)${SUFFIX}.txt"
@@ -166,5 +171,12 @@ echo
 echo "Saved:"
 printf '  %s\n' "${SAVED[@]}"
 echo
-echo "Ask the agent to analyze them, e.g.: run jvm_analyze_javacore on ${SAVED[0]}"
+if [ "$COUNT" -gt 1 ]; then
+  echo "Ask the agent to compare them, e.g.: run jvm_compare_javacores on ${SAVED[*]}"
+else
+  echo "Ask the agent to analyze it, e.g.: run jvm_analyze_javacore on ${SAVED[0]}"
+fi
 echo "Or open in IBM TMDA: java -Xmx2g -jar ~/tools/tmda/jca.jar ${SAVED[0]}"
+echo
+echo "The javacore file(s) are still in the pod (a few MB each). When you're done, remove them:"
+echo "  scripts/cleanup-javacores.sh $NAMESPACE $POD${CONTAINER:+ $CONTAINER}"

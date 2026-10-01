@@ -72,8 +72,13 @@ $ARGUMENTS
      not state). If a hang/deadlock is suspected or one pod is an outlier,
      ask the human to run `bash scripts/capture-javacore.sh <namespace>
      <pod>` — never run it or any exec yourself — then call
-     `jvm_analyze_javacore("runs/javacores/<file>.txt")`. If no file exists
-     yet, list the capture as a next step and finish the report.
+     `jvm_analyze_javacore("runs/javacores/<file>.txt")`. For a suspected
+     hang, slowdown or thread churn, ask for a series (`-n 3 -i 10`) and call
+     `jvm_compare_javacores(["runs/javacores/<pod>-<date>*.txt"])` instead.
+     If no file exists yet, list the capture as a next step and finish the
+     report. After analyzing javacores, always list "remove them from the
+     pod: `bash scripts/cleanup-javacores.sh <namespace> <pod>`" as a next
+     step for the human — never run it yourself.
 4. **A chart tool returns an image directly, not JSON.** If the underlying
    query returned no data points, the chart tool returns a structured error
    (`errorCategory: "business"`, "nothing to chart") instead of a blank

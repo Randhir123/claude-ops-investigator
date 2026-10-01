@@ -498,11 +498,24 @@ scripts that only a human runs:
   threads sitting in the same frame in every dump are stuck, not just busy.
   Run it with `bash scripts/capture-javacore.sh …`; it also prints the IBM
   TMDA command for the saved files.
+- **`scripts/cleanup-javacores.sh [-a] [-y] <namespace> <pod> [container]`**
+  — **human-run only.** Javacores stay in the pod until it restarts, so remove
+  them once they've been analyzed. By default it deletes exactly the dumps
+  `capture-javacore.sh` took from that pod (recorded under
+  `runs/javacores/.in-pod/`); `-a` targets every `javacore*.txt` in the JVM's
+  dump folders. It lists the files and asks once before deleting (`-y` skips
+  that), and only ever deletes `javacore*.txt`. The capture script, the
+  javacore tools' summaries and `jvm-analyst` all remind you to run it.
 - **`jvm_analyze_javacore(path)`** analyzes a captured javacore (only files
   under `runs/javacores/`): threads by state, largest thread pools (digits
   collapsed, e.g. `Default Executor-thread-#`), deadlocks, most-contended
   lock owners, blocked/parked threads, common stacks, and hot frames among
   runnable threads. IBM TMDA remains the tool for deeper analysis.
+- **`jvm_compare_javacores(paths)`** compares a series of 2–10 javacores from
+  one JVM (a list, or a glob like `runs/javacores/<pod>-<date>*.txt`). It
+  reports RUNNABLE threads stuck in the same frame in every dump, threads
+  BLOCKED throughout (with lock owner), idle-I/O and unchanged waiting
+  threads, and per-pool thread creation rates (churn).
 
-All three tools archive their result as evidence and return an
+All four tools archive their result as evidence and return an
 `evidence_ref`; `jvm-analyst` is allowed to call them in both harnesses.

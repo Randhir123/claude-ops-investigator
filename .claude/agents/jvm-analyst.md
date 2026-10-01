@@ -24,6 +24,7 @@ tools:
   - mcp__claude-ops-investigator__jvm_get_gc_log_events
   - mcp__claude-ops-investigator__jvm_analyze_gc_log
   - mcp__claude-ops-investigator__jvm_analyze_javacore
+  - mcp__claude-ops-investigator__jvm_compare_javacores
   - Read
   - Write
 ---
@@ -58,8 +59,8 @@ real `evidence_ref` alongside everything the other specialists gathered:
 Only archive results you're actually citing in your findings — don't archive
 every intermediate call speculatively.
 
-`jvm_get_gc_log_events`, `jvm_analyze_gc_log` and `jvm_analyze_javacore`
-are `claude-ops-investigator` tools, so they archive their own results and
+`jvm_get_gc_log_events`, `jvm_analyze_gc_log`, `jvm_analyze_javacore` and
+`jvm_compare_javacores` are `claude-ops-investigator` tools, so they archive their own results and
 already return an `evidence_ref` — cite it directly, don't re-archive.
 
 ## Scratchpad
@@ -128,12 +129,22 @@ re-run queries another wave already covered.
   suspected, or an outlier thread count needs explaining, a thread dump
   (javacore) is needed. You never capture one — that requires exec into the
   pod. Ask a human to run `bash scripts/capture-javacore.sh <namespace>
-  <pod>` (for a suspected hang, a series: `-n 3 -i 10`, then compare the
-  dumps — threads in the same frame every time are stuck), then call `jvm_analyze_javacore` on the file it saves under
+  <pod>`, then call `jvm_analyze_javacore` on the file it saves under
   `runs/javacores/` (states, largest thread pools, deadlocks, lock
-  contention, common stacks). If no file exists yet, put that request under
+  contention, common stacks). For a suspected hang, slowdown or thread
+  churn, ask for a series instead (`-n 3 -i 10`) and call
+  `jvm_compare_javacores` on the saved files (a glob such as
+  `runs/javacores/<pod>-<date>*.txt` works): it separates threads stuck in
+  the same frame in every dump from busy and idle-I/O ones, lists threads
+  BLOCKED throughout, and measures how many threads each pool is
+  creating per second. If no file exists yet, put that request under
   unknowns/next steps; don't wait for it or try to capture it yourself. For
   analysis beyond that summary, IBM TMDA remains the reference tool.
+  Captured javacores stay in the pod (a few MB each) until a human removes
+  them, which you never do yourself: whenever you analyze or compare
+  javacores, list "remove the javacores from the pod:
+  `bash scripts/cleanup-javacores.sh <namespace> <pod>`" under next steps
+  (the tool summaries carry the same reminder).
 - Use `get_gc_memory_correlation` specifically to distinguish "real
   leak/undersized heap" (rising heap floor + climbing GC frequency) from
   "load spike" (heap returns to baseline each cycle despite elevated GC

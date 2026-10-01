@@ -38,6 +38,9 @@ def _run_hook(command: str) -> dict | None:
         "echo hi; capture-javacore.sh si pod-1",
         "scripts/capture-gclog.sh si pod-1",
         "bash scripts/capture-gclog.sh -m 5 si pod-1 app",
+        "scripts/cleanup-javacores.sh si pod-1",
+        "bash scripts/cleanup-javacores.sh -a -y si pod-1",
+        "sh -c 'scripts/cleanup-javacores.sh -y si pod-1'",
         # wrapped in sh -c / bash -lc, or backgrounded
         "sh -c 'scripts/capture-javacore.sh si pod-1'",
         'bash -lc "cd /repo && scripts/capture-gclog.sh si pod-1"',
@@ -67,6 +70,7 @@ def test_human_only_and_destructive_commands_are_denied(command):
         "chmod +x scripts/capture-javacore.sh",
         "git add scripts/capture-javacore.sh",
         "sed -n 1,20p scripts/capture-gclog.sh",
+        "chmod +x scripts/cleanup-javacores.sh",
         # a quoted | inside a search pattern is not a pipe into the script
         'grep -c -E "capture-javacore|capture-gclog|jvm_analyze" README.md',
         "grep -e 'a;scripts/capture-gclog.sh' notes.txt",

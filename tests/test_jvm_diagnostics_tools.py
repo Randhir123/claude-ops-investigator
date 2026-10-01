@@ -503,3 +503,73 @@ def test_jvm_compare_javacores_rejects_non_javacore(javacore_dir):
 
     assert result["errorCategory"] == "validation"
     assert "not an OpenJ9 javacore" in result["message"]
+
+
+# --- forgiving input for jvm_compare_javacores (agents kept sending one path) ----------
+
+POD = "tsq-57b6-k8xsl"
+
+
+@pytest.fixture
+def series_dir(javacore_dir):
+    # an older 2-dump series, the 3-dump series under test, and an unrelated single dump
+    (javacore_dir / f"{POD}-20261001T001000Z-1.txt").write_text(SERIES[0][1])
+    (javacore_dir / f"{POD}-20261001T001010Z-2.txt").write_text(SERIES[1][1])
+    for i, (_, text) in enumerate(SERIES, start=1):
+        (javacore_dir / f"{POD}-20261001T00212{i}Z-{i}.txt").write_text(text)
+    (javacore_dir / f"{POD}-20261001T003000Z.txt").write_text(SERIES[2][1])
+    return javacore_dir
+
+
+@pytest.mark.parametrize("given", ["-1", "-2", "-3"])
+def test_single_file_of_a_series_expands_to_its_series(series_dir, evidence_to_tmp, given):
+    name = {"-1": "20261001T002121Z-1", "-2": "20261001T002122Z-2", "-3": "20261001T002123Z-3"}[given]
+
+    result = jvm_diagnostics_tools.jvm_compare_javacores([f"runs/javacores/{POD}-{name}.txt"])
+
+    assert result["isError"] is False
+    summary = result["data"]["summary"]
+    assert summary.startswith(f"(series auto-detected from {POD}-{name}.txt) 3 javacores over 20s")
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        f"runs/javacores/{POD}-20261001T002121Z-1.txt runs/javacores/{POD}-20261001T002122Z-2.txt",
+        [f"runs/javacores/{POD}-20261001T002121Z-1.txt, runs/javacores/{POD}-20261001T002122Z-2.txt"],
+        f"runs/javacores/{POD}-20261001T00212*-*.txt",
+    ],
+)
+def test_compare_accepts_string_forms(series_dir, evidence_to_tmp, paths):
+    result = jvm_diagnostics_tools.jvm_compare_javacores(paths)
+
+    assert result["isError"] is False
+    assert "javacores over" in result["data"]["summary"]
+
+
+def test_single_non_series_file_error_lists_candidates_to_copy(series_dir):
+    result = jvm_diagnostics_tools.jvm_compare_javacores([f"runs/javacores/{POD}-20261001T003000Z.txt"])
+
+    assert result["errorCategory"] == "validation"
+    assert "got 1" in result["message"]
+    assert f"runs/javacores/{POD}-20261001T003000Z.txt" in result["partialResults"]["candidate_files"]
+    assert any(alt.startswith("Call jvm_compare_javacores again with ALL the files in one list, e.g. paths=[")
+               for alt in result["alternatives"])
+
+
+def test_duplicate_paths_count_once(series_dir):
+    one = f"runs/javacores/{POD}-20261001T003000Z.txt"
+
+    result = jvm_diagnostics_tools.jvm_compare_javacores([one, one])
+
+    assert "got 1" in result["message"]
+
+
+def test_mcp_schema_accepts_list_or_string():
+    import asyncio
+
+    from claude_ops.mcp import server
+
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "jvm_compare_javacores")
+    schema = str(tool.inputSchema["properties"]["paths"])
+    assert "array" in schema and "string" in schema

@@ -38,17 +38,17 @@ _DENY_PATTERNS = [
     (re.compile(r"\bkubectl\b.*\brollout\b.*\brestart\b"), "kubectl rollout restart"),
     (re.compile(r"\bkubectl\b.*\bexec\b"), "kubectl exec"),
     (re.compile(r"\bhelm\b.*\bupgrade\b"), "helm upgrade"),
-    # Human-run only: scripts/capture-javacore.sh and scripts/capture-gclog.sh
-    # wrap `kubectl exec`, which the pattern above can't see when a script is
+    # Human-run only: scripts/capture-javacore.sh, scripts/capture-gclog.sh and
+    # scripts/cleanup-javacores.sh wrap `kubectl exec`, which the pattern above can't see when a script is
     # invoked by name. Matches only when a segment *runs* one (directly, via a
     # shell/source, or behind env/nohup/timeout/sudo/time wrappers), so reading
     # or grepping the files stays allowed.
     (
         re.compile(
             r"^\s*(?:(?:sudo|nohup|time|env(?:\s+\w+=\S*)*|timeout\s+\S+|source|\.|"
-            r"(?:ba|z|da|k)?sh(?:\s+-\w+)*)\s+)*(?:\S*/)?capture-(?:javacore|gclog)(?:\.sh)?(?:\s|$)"
+            r"(?:ba|z|da|k)?sh(?:\s+-\w+)*)\s+)*(?:\S*/)?(?:capture-(?:javacore|gclog)|cleanup-javacores)(?:\.sh)?(?:\s|$)"
         ),
-        "scripts/capture-*.sh (human-run only)",
+        "scripts/capture-*.sh / cleanup-javacores.sh (human-run only)",
     ),
 ]
 

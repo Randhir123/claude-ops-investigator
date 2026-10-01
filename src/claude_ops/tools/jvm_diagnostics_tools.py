@@ -414,6 +414,18 @@ def parse_javacore(text: str) -> dict[str, Any]:
     }
 
 
+_CAPTURED_NAME_RE = re.compile(r"^(?P<pod>.+?)-\d{8}T\d{6}Z(?:-\d+)?\.txt$")
+
+
+def _cleanup_reminder(file_names: list[str]) -> str:
+    """Remind the human that captured javacores are still in the pod (agents can't delete them)."""
+    pods = sorted({m["pod"] for name in file_names if (m := _CAPTURED_NAME_RE.match(name))})
+    commands = " / ".join(f"scripts/cleanup-javacores.sh <namespace> {pod}" for pod in pods) or (
+        "scripts/cleanup-javacores.sh <namespace> <pod>"
+    )
+    return f"REMINDER for the human: the javacore files are still in the pod; once done, run {commands}"
+
+
 def _javacore_summary(name: str, parsed: dict[str, Any]) -> str:
     parts = [f"{name}: {parsed['thread_count']} threads"]
     if parsed["threads_by_state"]:
@@ -426,6 +438,7 @@ def _javacore_summary(name: str, parsed: dict[str, Any]) -> str:
     if parsed["most_contended_lock_owners"]:
         top = parsed["most_contended_lock_owners"][0]
         parts.append(f"most contended lock owner '{top['owner']}' with {top['waiters']} waiters")
+    parts.insert(1, _cleanup_reminder([name]))  # early: summaries are truncated at 1000 chars
     return "; ".join(parts)
 
 
@@ -616,6 +629,7 @@ def _compare_summary(parsed: dict[str, Any]) -> str:
         rate = f" (~{top['threads_created_per_second']}/s)" if top["threads_created_per_second"] else ""
         parts.append(f"most churn: '{top['pool']}' created {top['threads_created']} threads{rate}")
     parts.append(f"{parsed['threads_appeared']} threads appeared, {parsed['threads_disappeared']} disappeared")
+    parts.insert(1, _cleanup_reminder([d["file"] for d in parsed["dumps"]]))  # early: summaries are truncated
     return "; ".join(parts)
 
 

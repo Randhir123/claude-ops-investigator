@@ -125,11 +125,8 @@ same frame in every dump is **stuck**; one that moves between dumps is
 
 The javacores stay in the pod, usually as
 `/opt/ibm/wlp/output/defaultServer/javacore.<date>.<time>.<pid>.<seq>.txt`, a
-few MB each. They disappear on restart. To delete them sooner:
-
-```bash
-kubectl exec -n si <pod> -- sh -c 'rm -f /opt/ibm/wlp/output/defaultServer/javacore.*.txt'
-```
+few MB each, until the pod restarts. See [Clean up](#4-clean-up) below. The
+capture script and the agent both remind you.
 
 ### Analyze
 
@@ -193,7 +190,31 @@ keep a series to 3–5 dumps.
 For deeper analysis: `java -Xmx2g -jar ~/tools/tmda/jca.jar <javacore.txt>`
 (IBM TMDA). The script prints this command too.
 
-## 4. Doing it by hand
+## 4. Clean up
+
+Once you've analyzed the javacores, remove them from the pod:
+
+```bash
+scripts/cleanup-javacores.sh si <pod>         # the dumps capture-javacore.sh took from this pod
+scripts/cleanup-javacores.sh -a si <pod>      # every javacore in the JVM's dump folders
+```
+
+- **By default** it removes exactly the javacores `capture-javacore.sh` took
+  from that pod. The capture script records their paths in
+  `runs/javacores/.in-pod/<namespace>_<pod>.txt`.
+- **`-a`** finds every `javacore*.txt` in the JVM's dump folders. Use it for
+  dumps taken before that record existed, or by hand. It also lists
+  javacores the JVM wrote on its own (e.g. on an `OutOfMemoryError`), so
+  check the list before saying yes.
+- **It shows the files and sizes and asks once** before deleting. `-y` skips
+  the question. It only ever deletes files named `javacore*.txt`, then checks
+  they're gone.
+- **Human-run only,** like the capture scripts. Agents tell you to run it but
+  never run it themselves.
+
+GC log captures only read files, so there's nothing to clean up after them.
+
+## 5. Doing it by hand
 
 If the scripts aren't available, these are the same steps. Run them yourself,
 never through an agent.

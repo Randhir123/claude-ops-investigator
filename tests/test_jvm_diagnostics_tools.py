@@ -309,6 +309,8 @@ def test_analyze_javacore_success_stores_evidence(javacore_dir, evidence_to_tmp)
     assert result["data"]["content_type"] == "jvm.javacore_analysis"
     assert "5 threads" in result["data"]["summary"]
     assert "DEADLOCK among 2 threads" in result["data"]["summary"]
+    # pod name comes from the capture script's file naming: <pod>-<utc>.txt
+    assert "run scripts/cleanup-javacores.sh <namespace> tsq-abc" in result["data"]["summary"]
 
 
 @pytest.mark.parametrize(
@@ -461,6 +463,19 @@ def test_jvm_compare_javacores_with_glob_stores_evidence(javacore_dir, evidence_
     assert "1 BLOCKED throughout" in summary
     assert "largest stuck group: 1 threads at com/example/Spin.loop(Spin.java:5)" in summary
     assert "'tsdquery-rest-1-thread-#' created 400 threads (~20.0/s)" in summary
+    # file names without the capture script's timestamp still get a generic reminder
+    assert "run scripts/cleanup-javacores.sh <namespace> <pod>" in summary
+
+
+def test_cleanup_reminder_names_each_pod_once():
+    reminder = jvm_diagnostics_tools._cleanup_reminder([
+        "tsq-57b6-k8xsl-20261001T013000Z-1.txt",
+        "tsq-57b6-k8xsl-20261001T013030Z-2.txt",
+        "other-pod-20261001T013100Z.txt",
+    ])
+    assert reminder.endswith(
+        "run scripts/cleanup-javacores.sh <namespace> other-pod / scripts/cleanup-javacores.sh <namespace> tsq-57b6-k8xsl"
+    )
 
 
 @pytest.mark.parametrize(

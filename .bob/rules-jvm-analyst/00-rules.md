@@ -117,6 +117,11 @@ make about the trend still carries a real `evidence_ref`.
   per-pool thread creation rates. If no file exists yet, put that request under
   unknowns/next steps; don't wait for it or try to capture it yourself. For
   analysis beyond that summary, IBM TMDA remains the reference tool.
+  Captured javacores stay in the pod (a few MB each) until a human removes
+  them, which you never do yourself: whenever you analyze or compare
+  javacores, list "remove the javacores from the pod:
+  `bash scripts/cleanup-javacores.sh <namespace> <pod>`" under next steps
+  (the tool summaries carry the same reminder).
 - Use `get_gc_memory_correlation` (or its chart form) specifically to
   distinguish "real leak/undersized heap" (rising heap floor + climbing GC
   frequency) from "load spike" (heap returns to baseline each cycle despite

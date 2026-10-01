@@ -503,6 +503,11 @@ scripts that only a human runs:
   collapsed, e.g. `Default Executor-thread-#`), deadlocks, most-contended
   lock owners, blocked/parked threads, common stacks, and hot frames among
   runnable threads. IBM TMDA remains the tool for deeper analysis.
+- **`jvm_compare_javacores(paths)`** compares a series of 2–10 javacores from
+  one JVM (a list, or a glob like `runs/javacores/<pod>-<date>*.txt`). It
+  reports RUNNABLE threads stuck in the same frame in every dump, threads
+  BLOCKED throughout (with lock owner), idle-I/O and unchanged waiting
+  threads, and per-pool thread creation rates (churn).
 
-All three tools archive their result as evidence and return an
+All four tools archive their result as evidence and return an
 `evidence_ref`; `jvm-analyst` is allowed to call them in both harnesses.

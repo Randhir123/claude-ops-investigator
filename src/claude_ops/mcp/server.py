@@ -693,6 +693,39 @@ def jvm_analyze_javacore(path: str) -> str:
 
 
 @mcp.tool()
+def jvm_compare_javacores(paths: list[str]) -> str:
+    """Compare a series of javacores (thread dumps) from one JVM to tell stuck threads from busy ones.
+
+    Parameters:
+    - `paths`: 2-10 files under `runs/javacores/` (repo-relative or absolute),
+      or a glob such as `runs/javacores/<pod>-20261001T0130*.txt`. They should
+      come from the same pod, taken seconds apart — e.g. a human ran
+      `scripts/capture-javacore.sh -n 3 -i 10 <namespace> <pod>`.
+
+    Read-only, local files only. Matches each thread across dumps by Java
+    thread ID and reports:
+    - `stuck_runnable`: RUNNABLE threads whose top 5 frames are identical in
+      every dump (stuck or spinning), grouped by stack — excluding threads
+      idle in I/O waits such as `EPoll.wait`, which are counted separately
+      (`idle_io_threads`).
+    - `blocked_throughout`: threads BLOCKED in every dump, with the lock and
+      its owner.
+    - `thread_churn`: per pool, how far the thread-number suffix advanced
+      between the first and last dump, and the rate per second — how many
+      threads the pool is creating.
+    - Threads that appeared/disappeared, and per-dump states and deadlocks.
+
+    A thread waiting or parked on the same queue in every dump is normal for
+    an idle pool (`waiting_unchanged_threads`), not a hang. Archived as
+    evidence (`content_type: jvm.javacore_comparison`).
+
+    Agents never capture javacores (needs exec into the pod): ask a human to
+    run the capture script. For a single dump use `jvm_analyze_javacore`.
+    """
+    return _json(jvm_diagnostics_tools.jvm_compare_javacores(paths))
+
+
+@mcp.tool()
 def evidence_get_detail(evidence_ref: str) -> str:
     """Fetch the full raw payload behind a compact evidence summary.
 

@@ -62,7 +62,8 @@ make about the trend still carries a real `evidence_ref`.
   `get_before_after_deploy_comparison`, `render_heap_trend_chart`,
   `render_gc_behavior_chart`, `render_gc_memory_correlation_chart`, plus
   `claude-ops-investigator`'s own `evidence_store_external`,
-  `jvm_get_gc_log_events`, `jvm_analyze_gc_log` and `jvm_analyze_javacore` (the last three archive
+  `jvm_get_gc_log_events`, `jvm_analyze_gc_log`, `jvm_analyze_javacore` and
+  `jvm_compare_javacores` (the last four archive
   their own results and return an `evidence_ref` — cite it directly, don't
   re-archive). Never call this
   project's own `k8s_*`/`prom_*`/`ibm_logs_*` tools from this mode — that is
@@ -107,9 +108,13 @@ make about the trend still carries a real `evidence_ref`.
   suspected, or an outlier thread count needs explaining, a thread dump
   (javacore) is needed. You never capture one — that requires exec into the
   pod. Ask a human to run `bash scripts/capture-javacore.sh <namespace>
-  <pod>` (for a suspected hang, a series: `-n 3 -i 10`, then compare the
-  dumps — threads in the same frame every time are stuck), then call `jvm_analyze_javacore` on the file it saves under
-  `runs/javacores/`. If no file exists yet, put that request under
+  <pod>`, then call `jvm_analyze_javacore` on the file it saves under
+  `runs/javacores/`. For a suspected hang, slowdown or thread churn, ask
+  for a series instead (`-n 3 -i 10`) and call `jvm_compare_javacores` on
+  the saved files (a glob such as `runs/javacores/<pod>-<date>*.txt`
+  works): it separates threads stuck in the same frame in every dump from
+  busy and idle-I/O ones, lists threads BLOCKED throughout, and measures
+  per-pool thread creation rates. If no file exists yet, put that request under
   unknowns/next steps; don't wait for it or try to capture it yourself. For
   analysis beyond that summary, IBM TMDA remains the reference tool.
 - Use `get_gc_memory_correlation` (or its chart form) specifically to

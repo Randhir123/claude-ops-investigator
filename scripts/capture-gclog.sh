@@ -3,21 +3,25 @@
 #
 # HUMAN-RUN ONLY. Reading files inside a container needs `kubectl exec`, which
 # agents are never allowed to do: this script refuses to start without an
-# interactive terminal, asks you to type the pod name to confirm, and
-# .claude/hooks/block_unsafe_shell.py denies it from the agent's Bash tool.
+# interactive terminal, and .claude/hooks/block_unsafe_shell.py denies it
+# from the agent's Bash tool.
 # The agent then analyzes the saved files with the read-only
 # `jvm_analyze_gc_log` MCP tool (or open them in IBM GCMV).
 #
 # It only reads: nothing is signalled or changed in the pod. It works out
 # where the JVM writes its GC log from the JVM itself:
-#   - `-Xverbosegclog:<file>[,count,size]` on the command line or in
+#   - `-Xverbosegclog:<file>[,count,size]` (or HotSpot-style `-Xloggc:<file>`,
+#     which OpenJ9 also honors) on the command line or in
 #     OPENJ9_JAVA_OPTIONS / IBM_JAVA_OPTIONS / JAVA_TOOL_OPTIONS /
 #     JDK_JAVA_OPTIONS (%pid, %seq, %Y... tokens and rotated files included),
 #   - bare `-Xverbosegclog` -> the default verbosegc.<date>.<time>.<pid>.txt
 #     in the JVM's working directory,
 #   - plus the usual spots: /tmp/verbosegc.*.txt, /opt/ibm/*verbosegc.*.txt.
-# If the JVM only has `-verbose:gc` (GC log goes to stderr), there is no file:
-# use the agent's `jvm_get_gc_log_events`, which reads it from `kubectl logs`.
+# If the JVM only has `-verbose:gc` (GC log goes to stderr), it checks where
+# the JVM's stderr really points (/proc/<pid>/fd/2): if a launcher redirected
+# it to a file (e.g. Liberty's console.log), that file is copied as the GC log.
+# Otherwise there is no file: use the agent's `jvm_get_gc_log_events`, which
+# reads it from `kubectl logs`.
 # If neither is set there is no GC log at all; that needs a jvm.options change
 # and a restart, which this script can't work around.
 #
@@ -60,12 +64,7 @@ echo "namespace       : $NAMESPACE"
 echo "pod             : $POD${CONTAINER:+ (container $CONTAINER)}"
 echo "max files       : $MAX_FILES (newest first)"
 echo
-echo "This reads the JVM's verbose GC log file(s) out of the pod. Nothing in the pod is changed."
-read -r -p "Type the pod name to confirm: " CONFIRM
-if [ "$CONFIRM" != "$POD" ]; then
-  echo "confirmation did not match; aborting" >&2
-  exit 1
-fi
+echo "Reading the JVM's verbose GC log file(s) out of the pod. Nothing in the pod is changed."
 
 EXEC_ARGS=(-n "$NAMESPACE" "$POD")
 if [ -n "$CONTAINER" ]; then
@@ -96,10 +95,11 @@ tr "\0" "\n" < "/proc/$pid/environ" 2>/dev/null | while IFS= read -r kv; do
   esac
 done >> "$opts"
 
-spec=""; bare=""; stderr_gc=""
+spec=""; spec_opt=""; bare=""; stderr_gc=""
 while IFS= read -r o; do
   case "$o" in
-    -Xverbosegclog:*) spec=${o#-Xverbosegclog:} ;;
+    -Xverbosegclog:*) spec=${o#-Xverbosegclog:}; spec_opt=-Xverbosegclog ;;
+    -Xloggc:*) spec=${o#-Xloggc:}; spec_opt=-Xloggc ;;  # HotSpot-style alias OpenJ9 also honors
     -Xverbosegclog) bare=1 ;;
     -verbose:gc|-verbose:gc,*) stderr_gc=1 ;;
   esac
@@ -108,7 +108,7 @@ rm -f "$opts"
 
 patterns=""
 if [ -n "$spec" ]; then
-  echo "SPEC -Xverbosegclog:$spec"
+  echo "SPEC $spec_opt:$spec"
   f=${spec%%,*}
   case "$f" in /*) ;; *) f="$cwd/$f" ;; esac
   g=$(printf "%s" "$f" | sed "s/%[A-Za-z]*/*/g")
@@ -118,7 +118,14 @@ elif [ -n "$bare" ]; then
   patterns="$cwd/verbosegc.*.txt"
 elif [ -n "$stderr_gc" ]; then
   echo "SPEC -verbose:gc (stderr)"
-  exit 5
+  # Where does JVM stderr really go? If a launcher redirected it to a
+  # file (e.g. Liberty console.log), that file is the GC log.
+  target=$(readlink "/proc/$pid/fd/2" 2>/dev/null || true)
+  echo "STDERR ${target:-unknown}"
+  case "$target" in
+    /*) [ -f "$target" ] || exit 5; patterns="$target" ;;
+    *) exit 5 ;;
+  esac
 else
   echo "SPEC none"
 fi
@@ -142,12 +149,16 @@ echo "Looking up the JVM's GC log configuration..."
 RC=0
 LISTING=$(kubectl exec "${EXEC_ARGS[@]}" -- sh -c "MAX=$MAX_FILES; $REMOTE_SCRIPT") || RC=$?
 SPEC_LINE=$(printf '%s\n' "$LISTING" | sed -n 's/^SPEC //p' | head -n 1)
+STDERR_LINE=$(printf '%s\n' "$LISTING" | sed -n 's/^STDERR //p' | head -n 1)
 [ -n "$SPEC_LINE" ] && echo "  JVM is configured with: $SPEC_LINE"
+[ -n "$STDERR_LINE" ] && echo "  JVM stderr goes to   : $STDERR_LINE"
 
 if [ "$RC" -eq 5 ]; then
   echo
-  echo "This JVM writes its GC log to stderr (-verbose:gc only), so there is no file to copy."
-  echo "Ask the agent to run jvm_get_gc_log_events for $NAMESPACE/$POD instead; it reads kubectl logs."
+  echo "This JVM writes its GC log to stderr (-verbose:gc only), and stderr is not a regular file,"
+  echo "so there is no file to copy. Ask the agent to run jvm_get_gc_log_events for $NAMESPACE/$POD;"
+  echo "it reads kubectl logs. If that finds no GC events, stderr is going somewhere other than the"
+  echo "container log (see 'JVM stderr goes to' above)."
   exit 0
 fi
 if [ "$RC" -eq 6 ]; then
@@ -172,9 +183,16 @@ while read -r TAG SIZE REMOTE_PATH; do
   SEEN="$SEEN$REMOTE_PATH"$'\n'
   N=$((N + 1))
   NAME=$(basename "$REMOTE_PATH")
-  [ -e "$OUT_DIR/$NAME" ] && NAME="$N-$NAME"
-  echo "  copying $REMOTE_PATH ($SIZE bytes)"
+  if [ -e "$OUT_DIR/$NAME" ]; then NAME="$N-$NAME"; fi
+  echo "  copying $REMOTE_PATH ($SIZE bytes in the pod)"
   kubectl exec "${EXEC_ARGS[@]}" -- cat "$REMOTE_PATH" > "$OUT_DIR/$NAME"
+  GOT=$(wc -c < "$OUT_DIR/$NAME" | tr -d ' ')
+  # A live log can grow between listing and copy, so only fewer bytes is a problem.
+  if [ "$SIZE" != "?" ] && [ "$GOT" -lt "$SIZE" ]; then
+    echo "  WARNING: copied only $GOT of $SIZE bytes; the transfer was cut short. Re-run to retry." >&2
+  else
+    echo "  copied $GOT bytes"
+  fi
 done <<< "$LISTING"
 
 REL_DIR=${OUT_DIR#"$REPO_ROOT"/}

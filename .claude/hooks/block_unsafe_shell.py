@@ -22,7 +22,9 @@ import os
 import re
 import sys
 
-_SHELL_SEPARATORS = re.compile(r"&&|\|\||;|\|")
+# `sh -c '<script>'` (or bash/zsh/dash/ksh, with flags like -lc): the quoted
+# script is checked as a command line of its own.
+_SHELL_DASH_C = re.compile(r"""^\s*(?:\S*/)?(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+(['"])(.*)\1""", re.S)
 
 # Mirrors the *category* of src/claude_ops/hooks.py::DESTRUCTIVE_KUBECTL_VERBS
 # for the specific verbs called out for this harness-level gate. Intentionally
@@ -55,14 +57,55 @@ def _hooks_disabled() -> bool:
     return os.environ.get("CLAUDE_OPS_HOOKS_DISABLED", "").strip().lower() in ("1", "true", "yes")
 
 
-def _find_violation(command: str) -> str | None:
+def _split_segments(command: str) -> list[str]:
+    """Split on ; | || && & and newlines, but not inside quotes.
+
+    So `grep -E "a|b"` stays one segment, while `x | y` is two.
+    """
+    segments: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(command):
+                buf.append(command[i + 1])
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == "\\" and i + 1 < len(command):
+            buf.extend((ch, command[i + 1]))
+            i += 1
+        elif ch in ";|&\n":
+            segments.append("".join(buf))
+            buf = []
+            if command.startswith(("&&", "||"), i):
+                i += 1
+        else:
+            buf.append(ch)
+        i += 1
+    segments.append("".join(buf))
+    return segments
+
+
+def _find_violation(command: str, depth: int = 0) -> str | None:
     # Check each shell-separated segment independently so a denied verb in
     # one clause doesn't false-positive off an unrelated kubectl/helm call
     # elsewhere in the same line (e.g. "kubectl get pods | grep delete").
-    for segment in _SHELL_SEPARATORS.split(command):
+    for segment in _split_segments(command):
         for pattern, label in _DENY_PATTERNS:
             if pattern.search(segment):
                 return label
+        inner = _SHELL_DASH_C.match(segment)
+        if inner and depth < 3:
+            violation = _find_violation(inner.group(2), depth + 1)
+            if violation:
+                return violation
     return None
 
 

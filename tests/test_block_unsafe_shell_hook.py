@@ -38,6 +38,12 @@ def _run_hook(command: str) -> dict | None:
         "echo hi; capture-javacore.sh si pod-1",
         "scripts/capture-gclog.sh si pod-1",
         "bash scripts/capture-gclog.sh -m 5 si pod-1 app",
+        # wrapped in sh -c / bash -lc, or backgrounded
+        "sh -c 'scripts/capture-javacore.sh si pod-1'",
+        'bash -lc "cd /repo && scripts/capture-gclog.sh si pod-1"',
+        "true & scripts/capture-gclog.sh si pod-1",
+        # quoting doesn't hide a destructive verb
+        'echo "x; kubectl delete pod pod-1"',
         "kubectl exec -n si pod-1 -- kill -3 1",
         "kubectl -n si delete pod pod-1",
     ],
@@ -61,6 +67,11 @@ def test_human_only_and_destructive_commands_are_denied(command):
         "chmod +x scripts/capture-javacore.sh",
         "git add scripts/capture-javacore.sh",
         "sed -n 1,20p scripts/capture-gclog.sh",
+        # a quoted | inside a search pattern is not a pipe into the script
+        'grep -c -E "capture-javacore|capture-gclog|jvm_analyze" README.md',
+        "grep -e 'a;scripts/capture-gclog.sh' notes.txt",
+        "kubectl get pods -n si | grep delete",
+        "kubectl logs pod-1 2>&1 | tail -5",
     ],
 )
 def test_read_only_commands_are_allowed(command):

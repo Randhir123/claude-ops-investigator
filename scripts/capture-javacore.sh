@@ -3,8 +3,8 @@
 #
 # HUMAN-RUN ONLY. This is the one place in this project that uses
 # `kubectl exec`, which is why agents never run it: it refuses to start without
-# an interactive terminal, asks you to type the pod name to confirm, and
-# .claude/hooks/block_unsafe_shell.py denies it from the agent's Bash tool.
+# an interactive terminal, and .claude/hooks/block_unsafe_shell.py denies it
+# from the agent's Bash tool.
 # The agent then analyzes the saved files with the read-only
 # `jvm_analyze_javacore` MCP tool (or open them in IBM TMDA).
 #
@@ -62,12 +62,7 @@ echo "namespace       : $NAMESPACE"
 echo "pod             : $POD${CONTAINER:+ (container $CONTAINER)}"
 echo "dumps           : $COUNT$([ "$COUNT" -gt 1 ] && echo ", ${INTERVAL}s apart")"
 echo
-echo "This asks the JVM to write a javacore (jcmd Dump.java, or SIGQUIT). The JVM keeps running."
-read -r -p "Type the pod name to confirm: " CONFIRM
-if [ "$CONFIRM" != "$POD" ]; then
-  echo "confirmation did not match; aborting" >&2
-  exit 1
-fi
+echo "Asking the JVM to write a javacore (jcmd Dump.java, or SIGQUIT). The JVM keeps running."
 
 EXEC_ARGS=(-n "$NAMESPACE" "$POD")
 if [ -n "$CONTAINER" ]; then
@@ -85,21 +80,47 @@ for d in /proc/[0-9]*; do
   if [ "$c" = "java" ]; then pid=${d#/proc/}; break; fi
 done
 [ -n "$pid" ] || { echo "no java process found in container" >&2; exit 3; }
-cwd=$(cd "/proc/$pid/cwd" 2>/dev/null && pwd -P) || cwd=""
+cwd=$(cd "/proc/$pid/cwd" 2>/dev/null && pwd -P) || cwd="."
+
+# Where this JVM writes dumps, from its own settings (not this exec shell):
+# IBM_JAVACOREDIR in the JVM environment, and -Xdump directory=/file= options.
+abs() { case "$1" in /*) echo "$1" ;; *) echo "$cwd/$1" ;; esac; }
+dirs=""
+jdir=$(tr "\0" "\n" < "/proc/$pid/environ" 2>/dev/null | sed -n "s/^IBM_JAVACOREDIR=//p" | head -n 1)
+if [ -n "$jdir" ]; then dirs="$dirs $(abs "$jdir")"; fi
+for o in $(tr "\0" "\n" < "/proc/$pid/cmdline" 2>/dev/null | sed -n "/^-Xdump/p"); do
+  d=$(printf "%s" "$o" | sed -n "s/.*directory=\([^,]*\).*/\1/p")
+  if [ -n "$d" ]; then dirs="$dirs $(abs "$d")"; fi
+  f=$(printf "%s" "$o" | sed -n "s/.*file=\([^,]*\).*/\1/p")
+  if [ -n "$f" ]; then dirs="$dirs $(abs "${f%/*}")"; fi
+done
+dirs="$dirs $cwd $cwd/logs /logs /tmp /opt/ibm /opt/ibm/wlp/output/defaultServer /opt/ibm/wlp/output/defaultServer/logs"
+
 marker="/tmp/.javacore-marker-$$"
 : > "$marker"
 sleep 1  # make sure the new javacore is strictly newer than the marker
-if command -v jcmd >/dev/null 2>&1 && jcmd "$pid" Dump.java >/dev/null 2>&1; then
-  :
-else
-  kill -3 "$pid"
+
+# jcmd normally prints the path it wrote; fall back to SIGQUIT if it did not dump.
+out=""
+if command -v jcmd >/dev/null 2>&1; then
+  out=$(jcmd "$pid" Dump.java 2>&1) || true
 fi
+# The reported path may be relative to the JVM working directory.
+path=$(printf "%s\n" "$out" | sed -n "s/.*[ :]\([^ :]*javacore[^ ]*\.txt\).*/\1/p" | head -n 1)
+if [ -n "$path" ]; then path=$(abs "$path"); fi
+if [ -n "$path" ] && [ -f "$path" ]; then
+  sleep 2  # let the JVM finish writing
+  rm -f "$marker"
+  echo "$path"
+  exit 0
+fi
+kill -3 "$pid"
+
 i=0
 while [ $i -lt 30 ]; do
   sleep 1
   i=$((i + 1))
-  for dir in "${IBM_JAVACOREDIR:-}" "$cwd" /tmp /opt/ibm /opt/ibm/wlp/output/defaultServer; do
-    [ -n "$dir" ] || continue
+  for dir in $dirs; do
     for f in "$dir"/javacore*.txt; do
       if [ -f "$f" ] && [ "$f" -nt "$marker" ]; then
         sleep 2  # let the JVM finish writing
@@ -111,7 +132,14 @@ while [ $i -lt 30 ]; do
   done
 done
 rm -f "$marker"
-echo "javacore was not found within 30s (checked IBM_JAVACOREDIR, the JVM cwd, /tmp, /opt/ibm, Liberty output dir)" >&2
+{
+  echo "javacore was not found within 30s."
+  echo "java pid: $pid, cwd: $cwd"
+  echo "jcmd output: ${out:-<jcmd not available or no output>}"
+  echo "checked:$dirs"
+  echo "existing javacores in those directories (any age):"
+  for dir in $dirs; do ls -l "$dir"/javacore*.txt 2>/dev/null || true; done
+} >&2
 exit 4
 '
 
@@ -123,7 +151,9 @@ SAVED=()
 for ((n = 1; n <= COUNT; n++)); do
   echo "Triggering javacore $n/$COUNT..."
   REMOTE_PATH=$(kubectl exec "${EXEC_ARGS[@]}" -- sh -c "$REMOTE_SCRIPT")
-  OUT_FILE="$OUT_DIR/${POD}-$(date -u +%Y%m%dT%H%M%SZ)$([ "$COUNT" -gt 1 ] && echo "-$n").txt"
+  SUFFIX=""
+  if [ "$COUNT" -gt 1 ]; then SUFFIX="-$n"; fi
+  OUT_FILE="$OUT_DIR/${POD}-$(date -u +%Y%m%dT%H%M%SZ)${SUFFIX}.txt"
   kubectl exec "${EXEC_ARGS[@]}" -- cat "$REMOTE_PATH" > "$OUT_FILE"
   echo "  saved $(wc -c < "$OUT_FILE" | tr -d ' ') bytes from $REMOTE_PATH"
   SAVED+=("${OUT_FILE#"$REPO_ROOT"/}")

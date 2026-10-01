@@ -417,6 +417,9 @@ investigation flow, see `/investigate-jvm` under Slash commands above.
 
 ### GC logs and thread dumps
 
+Step-by-step guide, with example output and troubleshooting:
+[`docs/jvm-gc-logs-and-thread-dumps.md`](docs/jvm-gc-logs-and-thread-dumps.md).
+
 The Prometheus-based JVM tools give counts and 5-minute averages. For the
 real thing, `claude-ops-investigator` adds three read-only tools, and two
 scripts that only a human runs:
@@ -436,7 +439,8 @@ scripts that only a human runs:
   error saying so.
 - **`scripts/capture-gclog.sh [-m max_files] <namespace> <pod> [container]`**
   — **human-run only**, for JVMs that write their GC log to a *file*
-  (`-Xverbosegclog`). It reads the JVM's real setting from its command line
+  (`-Xverbosegclog`, or `-Xloggc` as in our Liberty images; it also follows
+  a stderr redirected to a file). It reads the JVM's real setting from its command line
   and `OPENJ9_JAVA_OPTIONS`/`IBM_JAVA_OPTIONS`/`JAVA_TOOL_OPTIONS`/
   `JDK_JAVA_OPTIONS` (including `%pid`/`%seq` patterns and rotated files),
   also checks `/tmp/verbosegc.*.txt` and `/opt/ibm/*verbosegc.*.txt`, and
@@ -455,8 +459,7 @@ scripts that only a human runs:
   (`jcmd <pid> Dump.java`, falling back to SIGQUIT if the image has no
   `jcmd`, then reading the javacore file back), which agents are never
   allowed to do. The script refuses to run without an interactive terminal,
-  shows the kubectl context, asks you to type the pod name to confirm, and
-  saves each javacore to `runs/javacores/<pod>-<utc>[-n].txt`
+  shows the kubectl context and target pod, and saves each javacore to `runs/javacores/<pod>-<utc>[-n].txt`
   (gitignored). `.claude/hooks/block_unsafe_shell.py` also denies it from
   the agent's Bash tool. The JVM keeps running; application threads pause
   briefly while each dump is written. Use `-n 3 -i 10` to take a series:

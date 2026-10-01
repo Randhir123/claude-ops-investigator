@@ -239,7 +239,8 @@ def jvm_get_gc_log_events(
             f"No OpenJ9 verbose GC events found in {pod_name}'s logs for the last {since}m.",
             attempted=attempted,
             alternatives=[
-                "If the JVM writes its GC log to a file (-Xverbosegclog) rather than stderr, ask a human to run "
+                "If the JVM writes its GC log to a file (-Xverbosegclog or -Xloggc, which wins over a bare "
+                "-verbose:gc) rather than stderr, ask a human to run "
                 "scripts/capture-gclog.sh <namespace> <pod> and analyze the result with jvm_analyze_gc_log",
                 "Otherwise verbose GC is probably not enabled: a human must add -verbose:gc (or "
                 "-Xverbosegclog:<file>) to the service's jvm.options (e.g. its jvmoptions-*-config ConfigMap) "

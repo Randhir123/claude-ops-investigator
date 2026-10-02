@@ -477,6 +477,7 @@ mcp-servers/jvm-troubleshooter/ standalone add-on MCP server; imports nothing fr
 scripts/                        human-run capture/cleanup scripts, MCP smoke client
 .claude/   .bob/                the two agent harnesses: agents/modes, commands, rules, hooks
 docs/                           guides (Bob harness, GC logs and thread dumps)
+dashboards/                     Grafana dashboard JSON (JVM troubleshooting) and its generator
 ```
 
 The asymmetry is deliberate. `claude_ops` is more than an MCP server: the
@@ -547,6 +548,21 @@ pytest
 
 For a quick, standalone JVM health check outside the full incident-
 investigation flow, see `/investigate-jvm` under Slash commands above.
+
+### Grafana dashboard
+
+[`dashboards/jvm-troubleshooting.json`](dashboards/jvm-troubleshooting.json) puts
+the same JVM signals on one Grafana board, for when you want to watch them
+yourself:
+- memory against the container limit, heap, and tenured after GC (the leak signal)
+- memory pools
+- GC overhead, frequency and pauses
+- live threads and thread churn
+- CPU, file descriptors and class loading
+- JVM version and uptime per pod
+
+Import it in Grafana and pick the data source, namespace and service. See
+[`dashboards/README.md`](dashboards/README.md).
 
 ### GC logs and thread dumps
 

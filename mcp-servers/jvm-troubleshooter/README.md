@@ -173,6 +173,15 @@ claude-ops-investigator checkout (gitignored), or `./jvm-charts/` under the
 working directory. If the file can't be written, the image is still
 returned, with a note saying so.
 
+The text result also carries the same data as ```` ```mermaid ```` blocks
+(`xychart-beta`), with an instruction to paste them into the reply. Bob's
+chat renders Mermaid, so the charts show up inline there. Mermaid's xychart
+has no legend, so each block is a single line aggregated across pods, named
+in its title: heap used for the highest pod and the pod average, GC per
+minute and GC overhead for the busiest pod, and heap average next to GC per
+minute for the leak-or-load view. It's downsampled to at most 30 points,
+with times in UTC.
+
 Every tool returns the shared result contract:
 `{"isError": false, "data": {...}}` on success, or
 `{"isError": true, "errorCategory": ..., "isRetryable": ..., "message": ..., "attempted": ..., "alternatives": [...]}`

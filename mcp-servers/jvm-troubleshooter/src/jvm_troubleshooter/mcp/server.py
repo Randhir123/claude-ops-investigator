@@ -322,7 +322,13 @@ def _chart_response(result: dict[str, Any], kind: str, service: str):
         saved = f"Chart saved to {path} -- open this file if the image is not shown in your client."
     except OSError as exc:
         saved = f"Chart could not be saved to disk ({exc}); the image is attached."
-    return [image, f"{result.get('caption', '')}\n{saved}".strip()]
+    text = f"{result.get('caption', '')}\n{saved}".strip()
+    if result.get("mermaid"):
+        text += (
+            "\n\nTo show this chart inline in clients that render Mermaid but not image results "
+            "(e.g. IBM Bob), paste the block(s) below into your reply exactly as given:\n\n" + result["mermaid"]
+        )
+    return [image, text]
 
 
 @mcp.tool()

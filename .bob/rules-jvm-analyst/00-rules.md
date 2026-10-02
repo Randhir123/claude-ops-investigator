@@ -79,7 +79,10 @@ make about the trend still carries a real `evidence_ref`.
 - When the question is about a *window* of time rather than a single current
   value, call the matching `render_*_chart` tool alongside the data tool, not
   instead of it (see Evidence, above, for why the underlying data call still
-  needs archiving).
+  needs archiving). Bob's chat doesn't display image tool results, so paste
+  the ```` ```mermaid ```` blocks from the chart tool's text result into your
+  reply exactly as given, and mention the "Chart saved to …" path. Never draw
+  or invent chart data yourself.
 - **Never report GC pause max/min without their caveat.** These are
   bucket-averaged approximations (5-minute windows), not true single-event
   extremes — validated to understate a real worst-case pause by 8-9x against

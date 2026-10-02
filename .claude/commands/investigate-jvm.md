@@ -117,7 +117,11 @@ Examples:
      as a next step and finish the report. After analyzing javacores, always
      list "remove them from the pod: `bash scripts/cleanup-javacores.sh
      <namespace> <pod>`" as a next step for the human — never run it yourself.
-4. **A chart tool returns an image directly, not JSON** — pass `namespace`,
+4. **A chart tool returns an image plus text.** The text has the saved PNG
+   path and ```` ```mermaid ```` blocks of the same data. Where the client
+   doesn't show the image to the user (e.g. IBM Bob), paste those blocks into
+   your reply exactly as given and mention the saved path; never invent chart
+   data. Pass `namespace`,
    `service`, and `lookback_minutes` (and `step` if you need finer/coarser
    granularity than the default `60s`) exactly as you would to the
    corresponding data tool. If the underlying query returned no data points

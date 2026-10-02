@@ -75,3 +75,52 @@ def test_default_chart_dir_is_the_repo_runs_folder(monkeypatch):
 
     assert directory.parts[-2:] == ("runs", "charts")
     assert (directory.parent.parent / "mcp-servers").is_dir()
+
+
+# --- Mermaid text charts (for clients that render Mermaid but not image results) -----------
+
+
+def test_mermaid_text_is_appended_with_paste_instruction(monkeypatch, tmp_path):
+    monkeypatch.setenv("JVM_CHART_DIR", str(tmp_path))
+    block = '```mermaid\nxychart-beta\n    title "Heap used"\n    x-axis ["10:00"]\n    y-axis "GB" 0 --> 1\n    line [0.5]\n```'
+    monkeypatch.setattr(
+        chart_tools, "render_heap_trend_chart",
+        lambda *a, **k: {"isError": False, "png_bytes": PNG, "caption": "c", "mermaid": block},
+    )
+
+    text = _call("render_heap_trend_chart")[1].text
+
+    assert "paste the block(s) below into your reply exactly as given" in text
+    assert text.endswith(block)
+
+
+def test_across_pods_and_downsample():
+    a = [(0, 1.0), (60, 5.0)]
+    b = [(0, 3.0), (60, 1.0)]
+    assert chart_tools._across_pods([a, b], "max") == [(0, 3.0), (60, 5.0)]
+    assert chart_tools._across_pods([a, b], "mean") == [(0, 2.0), (60, 3.0)]
+
+    long = [(i * 60, float(i)) for i in range(95)]
+    down = chart_tools._downsample(long, "max")
+    assert len(down) <= chart_tools._MERMAID_MAX_POINTS
+    assert down[0] == (0, 3.0) and down[-1][1] == 94.0  # buckets of 4, max of each
+
+
+def test_mermaid_line_format():
+    text = chart_tools._mermaid_line('Heap "used" (GB)', "GB", [(1790000000, 1.234), (1790000060, 2.0)], y_max=4.0)
+
+    assert text.startswith("```mermaid\nxychart-beta\n") and text.endswith("```")
+    assert "title \"Heap 'used' (GB)\"" in text
+    assert 'x-axis ["14:13", "14:14"]' in text  # UTC HH:MM
+    assert 'y-axis "GB" 0 --> 4.20' in text  # 5% headroom over the ceiling
+    assert "line [1.23, 2]" in text
+    assert chart_tools._mermaid_line("x", "y", []) == ""
+
+
+def test_per_pod_sum_adds_generations():
+    entries = [
+        ({"instance": "p1", "name": "scavenge"}, [(0, 4.0), (60, 6.0)]),
+        ({"instance": "p1", "name": "global"}, [(0, 1.0)]),
+        ({"instance": "p2", "name": "scavenge"}, [(0, 2.0)]),
+    ]
+    assert sorted(chart_tools._per_pod_sum(entries)) == [[(0, 2.0)], [(0, 5.0), (60, 6.0)]]

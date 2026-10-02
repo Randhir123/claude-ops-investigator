@@ -138,3 +138,56 @@ def test_render_gc_memory_correlation_chart_propagates_error(prom_env, monkeypat
 
     assert result["isError"] is True
     assert result["message"] == "boom"
+
+
+# --- render_thread_trend_chart -------------------------------------------------
+
+
+def _ok(prom):
+    return {"isError": False, "data": prom}
+
+
+def test_render_thread_trend_chart_png_and_mermaid(prom_env, monkeypatch):
+    counts = matrix_result([
+        {"metric": {"pod": "tsq-a", "instance": "10.0.0.1:8080"}, "values": [(1700000000, "400"), (1700000060, "600")]},
+        {"metric": {"pod": "tsq-b", "instance": "10.0.0.2:8080"}, "values": [(1700000000, "500"), (1700000060, "500")]},
+    ])
+    started = matrix_result([
+        {"metric": {"pod": "tsq-a"}, "values": [(1700000000, "120"), (1700000060, "140")]},
+        {"metric": {"pod": "tsq-b"}, "values": [(1700000000, "100"), (1700000060, "120")]},
+    ])
+    queries = []
+
+    def fake_range_query(promql, **kwargs):
+        queries.append(promql)
+        return _ok(started if "TotalStartedThreadCount" in promql else counts)
+
+    monkeypatch.setattr(chart_tools, "range_query", fake_range_query)
+
+    result = chart_tools.render_thread_trend_chart("si", "time-series-query", lookback_minutes=60)
+
+    assert result["isError"] is False
+    assert result["png_bytes"].startswith(PNG_MAGIC)
+    assert any(q.startswith("rate(java_lang_Threading_TotalStartedThreadCount") for q in queries)
+    mermaid = result["mermaid"]
+    assert mermaid.count("```mermaid") == 3
+    assert 'title "Live threads, highest pod"' in mermaid and "line [500, 600]" in mermaid
+    assert 'title "Live threads, average across pods"' in mermaid and "line [450, 550]" in mermaid
+    assert "line [110, 130]" in mermaid  # threads started/s, average per pod
+    assert "not thread state" in result["caption"]
+
+
+def test_render_thread_trend_chart_no_data_is_business_error(prom_env, monkeypatch):
+    monkeypatch.setattr(chart_tools, "range_query", lambda promql, **kwargs: _ok(empty_matrix_result()))
+
+    result = chart_tools.render_thread_trend_chart("si", "time-series-query")
+
+    assert result["isError"] is True
+    assert result["errorCategory"] == "business"
+
+
+def test_render_thread_trend_chart_propagates_query_error(prom_env, monkeypatch):
+    error = {"isError": True, "errorCategory": "transient", "message": "boom"}
+    monkeypatch.setattr(chart_tools, "range_query", lambda promql, **kwargs: error)
+
+    assert chart_tools.render_thread_trend_chart("si", "time-series-query") == error

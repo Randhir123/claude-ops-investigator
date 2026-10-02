@@ -23,6 +23,7 @@ def _call(tool: str):
         ("render_heap_trend_chart", "heap-trend"),
         ("render_gc_behavior_chart", "gc-behavior"),
         ("render_gc_memory_correlation_chart", "gc-memory-correlation"),
+        ("render_thread_trend_chart", "thread-trend"),
     ],
 )
 def test_chart_tools_return_image_and_saved_file_path(monkeypatch, tmp_path, tool, kind):

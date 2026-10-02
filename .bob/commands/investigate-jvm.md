@@ -79,7 +79,8 @@ $ARGUMENTS
      `get_before_after_deploy_comparison` with the deploy's Unix-epoch
      timestamp. Correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_trend` first (count over
+   - Elevated or climbing thread count → `get_thread_trend` first, plus
+     `render_thread_trend_chart` for the shape over time (count over
      time, threads started per second = churn, deadlocked threads; count
      only, not state). If a hang/deadlock is suspected or one pod is an outlier,
      ask the human to run `bash scripts/capture-javacore.sh <namespace>

@@ -20,6 +20,7 @@ tools:
   - mcp__jvm-troubleshooter__render_heap_trend_chart
   - mcp__jvm-troubleshooter__render_gc_behavior_chart
   - mcp__jvm-troubleshooter__render_gc_memory_correlation_chart
+  - mcp__jvm-troubleshooter__render_thread_trend_chart
   - mcp__jvm-troubleshooter__get_thread_trend
   - mcp__jvm-troubleshooter__get_process_resources
   - mcp__jvm-troubleshooter__get_memory_vs_limit
@@ -153,7 +154,8 @@ re-run queries another wave already covered.
   gives the count over time, threads *started* per second and deadlocked
   threads, with no thread dump needed. A steady count with a high start rate
   is churn; ask for javacores only to find *which* pool churns or whether
-  threads are stuck.
+  threads are stuck. `render_thread_trend_chart` draws the count and start
+  rate per pod over the window.
 - **Never treat thread count as thread state.** A normal/steady count does
   not rule out a hang or deadlock among a subset of threads. If a hang is
   suspected, or an outlier thread count needs explaining, a thread dump

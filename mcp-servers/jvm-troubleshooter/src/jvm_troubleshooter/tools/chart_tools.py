@@ -33,6 +33,7 @@ from jvm_troubleshooter.errors import ToolError
 from jvm_troubleshooter.tools.correlation_tools import get_gc_memory_correlation
 from jvm_troubleshooter.tools.gc_tools import get_gc_behavior_over_time
 from jvm_troubleshooter.tools.heap_tools import get_heap_trend_over_time
+from jvm_troubleshooter.tools.prometheus_client import clamp_lookback_minutes, namespace_service_selector, range_query
 
 Series = dict[str, list[tuple[float, float]]]
 
@@ -361,5 +362,58 @@ def render_gc_memory_correlation_chart(
         "caption": (
             f"Heap used (solid) vs GC frequency (dashed) over the last {data['lookback_minutes']}m. "
             f"{data['how_to_read']}"
+        ),
+    }
+
+
+def render_thread_trend_chart(
+    namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s"
+) -> dict[str, Any]:
+    """Thread count and threads started per second (churn) per pod over the lookback window, as
+    two stacked panels. A steady count with a high start rate means pool threads are expiring and
+    being recreated; a climbing count means threads are piling up."""
+    window_m = clamp_lookback_minutes(lookback_minutes)
+    selector = namespace_service_selector(namespace, service)
+    end = int(datetime.now(timezone.utc).timestamp())
+    start = end - window_m * 60
+
+    counts = range_query(f"java_lang_Threading_ThreadCount{{{selector}}}", start=str(start), end=str(end), step=step)
+    if counts.get("isError"):
+        return counts
+    started = range_query(
+        f"rate(java_lang_Threading_TotalStartedThreadCount{{{selector}}}[5m])", start=str(start), end=str(end), step=step
+    )
+    if started.get("isError"):
+        return started
+
+    def by_pod(response: dict[str, Any]) -> Series:
+        return {(m.get("pod") or _series_label(m)): pts for m, pts in _iter_matrix_series(response["data"]) if pts}
+
+    count_series, started_series = by_pod(counts), by_pod(started)
+    if not count_series and not started_series:
+        return _no_data_error(namespace, service, window_m)
+
+    png_bytes = _render_panels_png(
+        title=f"Threads -- {service} ({namespace}), last {window_m}m",
+        panels=[
+            {"y_label": "live threads", "series": count_series},
+            {"y_label": "threads started / s", "series": started_series},
+        ],
+    )
+    count_lists, started_lists = list(count_series.values()), list(started_series.values())
+    mermaid = _mermaid_block([
+        _mermaid_line("Live threads, highest pod", "threads", _downsample(_across_pods(count_lists, "max"), "max")),
+        _mermaid_line("Live threads, average across pods", "threads", _downsample(_across_pods(count_lists, "mean"), "mean")),
+        _mermaid_line("Threads started per second (churn), average per pod", "per s",
+                      _downsample(_across_pods(started_lists, "mean"), "mean")),
+    ])
+    return {
+        "isError": False,
+        "png_bytes": png_bytes,
+        "mermaid": mermaid,
+        "caption": (
+            f"Live threads (top) and threads started per second (bottom) per pod over the last {window_m}m "
+            f"for {service}/{namespace}. A flat count with a high start rate is churn; a rising count is "
+            "threads piling up. Count and creation rate only, not thread state."
         ),
     }

@@ -100,7 +100,8 @@ Examples:
      with the deploy's Unix-epoch timestamp, to compare heap/GC/thread averages just before vs.
      just after it. This shows correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_trend` first: count over
+   - Elevated or climbing thread count → `get_thread_trend` first (and
+     `render_thread_trend_chart` for the shape over time): count over
      time, threads *started* per second (a steady count with a high start
      rate is churn) and deadlocked threads, all from metrics. Metrics show
      only the count, not thread state. If a hang/deadlock is suspected or one

@@ -362,6 +362,16 @@ def render_gc_memory_correlation_chart(
     return _chart_response(chart_tools.render_gc_memory_correlation_chart(namespace, service, lookback_minutes, step), "gc-memory-correlation", service)
 
 
+@mcp.tool()
+def render_thread_trend_chart(
+    namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s"
+):
+    """Render a PNG chart of live thread count and threads started per second (churn) per pod over
+    the lookback window -- a flat count with a high start rate is churn, a rising count is threads
+    piling up. Count and creation rate only, not thread state (that needs javacores)."""
+    return _chart_response(chart_tools.render_thread_trend_chart(namespace, service, lookback_minutes, step), "thread-trend", service)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 

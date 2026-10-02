@@ -61,6 +61,7 @@ make about the trend still carries a real `evidence_ref`.
   `get_memory_allocation_rate`, `get_memory_leak_indicator`,
   `get_before_after_deploy_comparison`, `render_heap_trend_chart`,
   `render_gc_behavior_chart`, `render_gc_memory_correlation_chart`,
+  `render_thread_trend_chart`,
   `get_thread_trend`, `get_process_resources`, `get_memory_vs_limit`,
   `get_class_loading_trend`, `get_jvm_runtime_info`, `get_incident_window`,
   `get_baseline_comparison`, `get_cpu_gc_correlation`, plus
@@ -128,7 +129,8 @@ make about the trend still carries a real `evidence_ref`.
   gives the count over time, threads *started* per second and deadlocked
   threads, with no thread dump needed. A steady count with a high start rate
   is churn; ask for javacores only to find *which* pool churns or whether
-  threads are stuck.
+  threads are stuck. `render_thread_trend_chart` draws the count and start
+  rate per pod over the window (paste its Mermaid blocks).
 - **Never treat thread count as thread state.** A normal/steady count does
   not rule out a hang or deadlock among a subset of threads. If a hang is
   suspected, or an outlier thread count needs explaining, a thread dump

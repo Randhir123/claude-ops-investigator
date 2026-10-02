@@ -126,6 +126,7 @@ when set. See `.env.example`.
 | `render_heap_trend_chart` | PNG line chart of heap used/max per pod over the lookback window |
 | `render_gc_behavior_chart` | PNG chart of GC frequency and overhead per pod+generation over the lookback window |
 | `render_gc_memory_correlation_chart` | PNG dual-axis chart overlaying heap used against GC frequency — the leak-vs-load-spike visual |
+| `render_thread_trend_chart` | PNG of live threads and threads started per second (churn) per pod over the window |
 
 The five runtime and resource tools (`get_thread_trend` through
 `get_jvm_runtime_info`) return compact **per-pod summaries keyed by pod
@@ -163,6 +164,25 @@ that's a real signal (wrong `JVM_LABEL_KEY`/service match, or too short a
 window) worth surfacing, not a rendering failure to retry past. Rendering is
 headless (matplotlib's `Agg` backend) — no display server needed even when
 this server runs on a headless host.
+
+Some clients pass image results to the model but don't show them to you;
+IBM Bob is one. So every chart is **also saved as a PNG file**, and the tool
+returns a text line with its path next to the image:
+`Chart saved to …/<service>-<chart>-<utc>.png`. The folder is `JVM_CHART_DIR`
+if set. Otherwise it's `runs/charts/` when the server runs from a
+claude-ops-investigator checkout (gitignored), or `./jvm-charts/` under the
+working directory. If the file can't be written, the image is still
+returned, with a note saying so.
+
+The text result also carries the same data as ```` ```mermaid ```` blocks
+(`xychart-beta`), with an instruction to paste them into the reply. Bob's
+chat renders Mermaid, so the charts show up inline there. Mermaid's xychart
+has no legend, so each block is a single line aggregated across pods, named
+in its title: heap used for the highest pod and the pod average, GC per
+minute and GC overhead for the busiest pod, heap average next to GC per
+minute for the leak-or-load view, and live threads (highest pod, pod
+average) with threads started per second for the thread chart. It's downsampled to at most 30 points,
+with times in UTC.
 
 Every tool returns the shared result contract:
 `{"isError": false, "data": {...}}` on success, or

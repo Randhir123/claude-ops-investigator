@@ -79,7 +79,8 @@ $ARGUMENTS
      `get_before_after_deploy_comparison` with the deploy's Unix-epoch
      timestamp. Correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_trend` first (count over
+   - Elevated or climbing thread count → `get_thread_trend` first, plus
+     `render_thread_trend_chart` for the shape over time (count over
      time, threads started per second = churn, deadlocked threads; count
      only, not state). If a hang/deadlock is suspected or one pod is an outlier,
      ask the human to run `bash scripts/capture-javacore.sh <namespace>
@@ -91,7 +92,12 @@ $ARGUMENTS
      report. After analyzing javacores, always list "remove them from the
      pod: `bash scripts/cleanup-javacores.sh <namespace> <pod>`" as a next
      step for the human — never run it yourself.
-4. **A chart tool returns an image directly, not JSON.** If the underlying
+4. **Show charts inline with their Mermaid blocks.** Bob's chat doesn't display
+   image tool results, so the user never sees the PNG. Every chart tool's text
+   result ends with one or more ```` ```mermaid ```` blocks: paste them into
+   your reply **exactly as given**, where you discuss that chart, and mention
+   the "Chart saved to …" path. Never draw or invent chart data yourself.
+   **A chart tool returns an image directly, not JSON.** If the underlying
    query returned no data points, the chart tool returns a structured error
    (`errorCategory: "business"`, "nothing to chart") instead of a blank
    image — treat that as a real gap (wrong `JVM_LABEL_KEY`/service match, or

@@ -100,7 +100,8 @@ Examples:
      with the deploy's Unix-epoch timestamp, to compare heap/GC/thread averages just before vs.
      just after it. This shows correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_trend` first: count over
+   - Elevated or climbing thread count → `get_thread_trend` first (and
+     `render_thread_trend_chart` for the shape over time): count over
      time, threads *started* per second (a steady count with a high start
      rate is churn) and deadlocked threads, all from metrics. Metrics show
      only the count, not thread state. If a hang/deadlock is suspected or one
@@ -117,7 +118,11 @@ Examples:
      as a next step and finish the report. After analyzing javacores, always
      list "remove them from the pod: `bash scripts/cleanup-javacores.sh
      <namespace> <pod>`" as a next step for the human — never run it yourself.
-4. **A chart tool returns an image directly, not JSON** — pass `namespace`,
+4. **A chart tool returns an image plus text.** The text has the saved PNG
+   path and ```` ```mermaid ```` blocks of the same data. Where the client
+   doesn't show the image to the user (e.g. IBM Bob), paste those blocks into
+   your reply exactly as given and mention the saved path; never invent chart
+   data. Pass `namespace`,
    `service`, and `lookback_minutes` (and `step` if you need finer/coarser
    granularity than the default `60s`) exactly as you would to the
    corresponding data tool. If the underlying query returned no data points

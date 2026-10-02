@@ -27,6 +27,10 @@ here that can mutate Prometheus, the JVMs it scrapes, or the cluster.
 
 from __future__ import annotations
 
+import os
+import re
+import time
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -286,6 +290,45 @@ def get_before_after_deploy_comparison(
 # failure -- including "no data points in this window," which is a real, distinct
 # outcome from a connectivity/config error and is reported as its own error rather than
 # a blank chart.
+#
+# Some MCP clients (IBM Bob, for one) pass image results to the model but don't show them to
+# the user. So each chart is also saved as a PNG file, and a text line with its path is
+# returned alongside the image: JVM_CHART_DIR if set, else `runs/charts/` in the repo this
+# server runs from (an editable install inside claude-ops-investigator), else
+# `./jvm-charts/` under the working directory.
+
+
+def _chart_dir() -> Path:
+    configured = os.environ.get("JVM_CHART_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "runs").is_dir() and (parent / "mcp-servers").is_dir():
+            return parent / "runs" / "charts"
+    return Path.cwd() / "jvm-charts"
+
+
+def _chart_response(result: dict[str, Any], kind: str, service: str):
+    if result.get("isError"):
+        return result  # the structured error dict, as every other tool returns
+    image = Image(data=result["png_bytes"], format="png")
+    safe_service = re.sub(r"[^A-Za-z0-9_.-]", "_", service)[:64] or "service"
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    try:
+        directory = _chart_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{safe_service}-{kind}-{stamp}.png"
+        path.write_bytes(result["png_bytes"])
+        saved = f"Chart saved to {path} -- open this file if the image is not shown in your client."
+    except OSError as exc:
+        saved = f"Chart could not be saved to disk ({exc}); the image is attached."
+    text = f"{result.get('caption', '')}\n{saved}".strip()
+    if result.get("mermaid"):
+        text += (
+            "\n\nTo show this chart inline in clients that render Mermaid but not image results "
+            "(e.g. IBM Bob), paste the block(s) below into your reply exactly as given:\n\n" + result["mermaid"]
+        )
+    return [image, text]
 
 
 @mcp.tool()
@@ -294,10 +337,7 @@ def render_heap_trend_chart(
 ):
     """Render a PNG line chart of heap used/max per pod over the lookback window -- use this,
     not get_heap_status, whenever the question is about a window of time rather than right now."""
-    result = chart_tools.render_heap_trend_chart(namespace, service, lookback_minutes, step)
-    if result.get("isError"):
-        return _json(result)
-    return Image(data=result["png_bytes"], format="png")
+    return _chart_response(chart_tools.render_heap_trend_chart(namespace, service, lookback_minutes, step), "heap-trend", service)
 
 
 @mcp.tool()
@@ -307,10 +347,7 @@ def render_gc_behavior_chart(
     """Render a PNG chart of GC frequency (collections/min) and overhead (%) per pod+generation
     over the lookback window -- use this, not a single get_gc_throughput call, to see whether
     GC pressure is trending, spiking, or steady across the window."""
-    result = chart_tools.render_gc_behavior_chart(namespace, service, lookback_minutes, step)
-    if result.get("isError"):
-        return _json(result)
-    return Image(data=result["png_bytes"], format="png")
+    return _chart_response(chart_tools.render_gc_behavior_chart(namespace, service, lookback_minutes, step), "gc-behavior", service)
 
 
 @mcp.tool()
@@ -322,10 +359,17 @@ def render_gc_memory_correlation_chart(
     points toward a leak/undersized heap; heap returning to baseline each cycle points toward a
     load spike. Prefer this over get_gc_memory_correlation's raw numbers when the shape over time,
     not just the values, is what answers the question."""
-    result = chart_tools.render_gc_memory_correlation_chart(namespace, service, lookback_minutes, step)
-    if result.get("isError"):
-        return _json(result)
-    return Image(data=result["png_bytes"], format="png")
+    return _chart_response(chart_tools.render_gc_memory_correlation_chart(namespace, service, lookback_minutes, step), "gc-memory-correlation", service)
+
+
+@mcp.tool()
+def render_thread_trend_chart(
+    namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s"
+):
+    """Render a PNG chart of live thread count and threads started per second (churn) per pod over
+    the lookback window -- a flat count with a high start rate is churn, a rising count is threads
+    piling up. Count and creation rate only, not thread state (that needs javacores)."""
+    return _chart_response(chart_tools.render_thread_trend_chart(namespace, service, lookback_minutes, step), "thread-trend", service)
 
 
 def main() -> None:

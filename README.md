@@ -519,7 +519,7 @@ It's backed by Prometheus (or Thanos Query) scraping OpenJ9 JVMs via the
 standard Prometheus JMX Exporter, a different metric-naming convention than
 this project's own `prom_*` tools assume, so it ships its own PromQL.
 
-Its 26 tools are documented in full, including caveats on what each one
+Its 27 tools are documented in full, including caveats on what each one
 can't see, in
 [`mcp-servers/jvm-troubleshooter/README.md`](mcp-servers/jvm-troubleshooter/README.md):
 
@@ -534,7 +534,9 @@ can't see, in
 - **Time windows:** an **explicit start/end incident window**, a **baseline
   comparison** (avg/p50/p95/p99 and % change), **CPU-vs-GC correlation**.
 - **Cross-signal:** GC-memory correlation, before/after deploy comparison, a
-  one-call incident snapshot, and three PNG chart renderers.
+  one-call incident snapshot, and four charts (heap trend, GC behavior,
+  heap vs GC, thread trend). Each returns a PNG, saves it to `runs/charts/`,
+  and includes Mermaid blocks so the chart shows inline in Bob.
 Run its own test suite (independent of this project's `pytest` invocation,
 which only looks at the root `tests/`) with:
 

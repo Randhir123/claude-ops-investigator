@@ -33,6 +33,7 @@ from jvm_troubleshooter.errors import ToolError
 from jvm_troubleshooter.tools.correlation_tools import get_gc_memory_correlation
 from jvm_troubleshooter.tools.gc_tools import get_gc_behavior_over_time
 from jvm_troubleshooter.tools.heap_tools import get_heap_trend_over_time
+from jvm_troubleshooter.tools.prometheus_client import clamp_lookback_minutes, namespace_service_selector, range_query
 
 Series = dict[str, list[tuple[float, float]]]
 
@@ -83,6 +84,78 @@ def _no_data_error(namespace: str, service: str, lookback_minutes: int) -> dict[
             "(see get_gc_activity/get_heap_status for an instant-query sanity check)",
         ],
     ).to_dict()
+
+
+# --- Mermaid text charts --------------------------------------------------------------
+#
+# Some MCP clients (IBM Bob) never display image tool results, but do render Mermaid code
+# blocks in the assistant's reply. So each chart also comes as small Mermaid `xychart-beta`
+# blocks the model can paste into its answer. xychart has no legend, so every block is ONE
+# line, aggregated across pods, with what it shows spelled out in its title.
+
+_MERMAID_MAX_POINTS = 30
+
+
+def _across_pods(series_list: list[list[tuple[float, float]]], how: str) -> list[tuple[float, float]]:
+    """Combine per-pod series into one: max or mean of the pods' values at each timestamp."""
+    by_ts: dict[float, list[float]] = {}
+    for points in series_list:
+        for ts, value in points:
+            by_ts.setdefault(ts, []).append(value)
+    pick = max if how == "max" else (lambda vs: sum(vs) / len(vs))
+    return [(ts, pick(values)) for ts, values in sorted(by_ts.items())]
+
+
+def _downsample(points: list[tuple[float, float]], how: str) -> list[tuple[float, float]]:
+    """At most _MERMAID_MAX_POINTS buckets, keeping each bucket's max or mean (and its first time)."""
+    if len(points) <= _MERMAID_MAX_POINTS:
+        return points
+    size = math.ceil(len(points) / _MERMAID_MAX_POINTS)
+    out = []
+    for i in range(0, len(points), size):
+        chunk = points[i:i + size]
+        values = [v for _, v in chunk]
+        out.append((chunk[0][0], max(values) if how == "max" else sum(values) / len(values)))
+    return out
+
+
+def _mermaid_line(title: str, y_label: str, points: list[tuple[float, float]], *, y_max: float | None = None) -> str:
+    """One Mermaid xychart-beta line chart. Times are HH:MM in UTC."""
+    if not points:
+        return ""
+    labels = ", ".join(f'"{datetime.fromtimestamp(ts, timezone.utc).strftime("%H:%M")}"' for ts, _ in points)
+    values = ", ".join(f"{v:.2f}".rstrip("0").rstrip(".") for _, v in points)
+    top = y_max if y_max is not None else max(v for _, v in points)
+    top = top * 1.05 if top > 0 else 1
+    safe_title = title.replace('"', "'")
+    return (
+        "```mermaid\nxychart-beta\n"
+        f'    title "{safe_title}"\n'
+        f"    x-axis [{labels}]\n"
+        f'    y-axis "{y_label}" 0 --> {top:.2f}\n'
+        f"    line [{values}]\n```"
+    )
+
+
+def _per_pod_sum(entries: list[tuple[dict[str, str], list[tuple[float, float]]]]) -> list[list[tuple[float, float]]]:
+    """Sum series that belong to the same pod (e.g. scavenge + global) into one series per pod."""
+    pods: dict[str, dict[float, float]] = {}
+    for metric, points in entries:
+        pod = pods.setdefault(_series_label(metric), {})
+        for ts, value in points:
+            pod[ts] = pod.get(ts, 0.0) + value
+    return [sorted(by_ts.items()) for by_ts in pods.values()]
+
+
+_GB = 1e9
+
+
+def _scaled(points: list[tuple[float, float]], factor: float) -> list[tuple[float, float]]:
+    return [(ts, v / factor) for ts, v in points]
+
+
+def _mermaid_block(charts: list[str]) -> str:
+    return "\n\n".join(c for c in charts if c)
 
 
 def _render_panels_png(*, title: str, panels: list[dict[str, Any]]) -> bytes:
@@ -182,9 +255,20 @@ def render_heap_trend_chart(
         title=f"Heap used/max -- {service} ({namespace}), last {data['lookback_minutes']}m",
         panels=[{"y_label": "bytes", "series": series}],
     )
+    used = [points for _, points in _iter_matrix_series(data["heap_used_bytes_over_time"])]
+    ceiling = max((v for _, points in _iter_matrix_series(data["heap_max_bytes_over_time"]) for _, v in points), default=None)
+    ceiling_gb = ceiling / _GB if ceiling else None
+    ceiling_note = f", heap max {ceiling_gb:.1f} GB" if ceiling_gb else ""
+    mermaid = _mermaid_block([
+        _mermaid_line(f"Heap used, highest pod (GB{ceiling_note})", "GB",
+                      _scaled(_downsample(_across_pods(used, "max"), "max"), _GB), y_max=ceiling_gb),
+        _mermaid_line("Heap used, average across pods (GB)", "GB",
+                      _scaled(_downsample(_across_pods(used, "mean"), "mean"), _GB), y_max=ceiling_gb),
+    ])
     return {
         "isError": False,
         "png_bytes": png_bytes,
+        "mermaid": mermaid,
         "caption": f"Heap used/max per pod over the last {data['lookback_minutes']}m for {service}/{namespace}.",
     }
 
@@ -209,6 +293,14 @@ def render_gc_behavior_chart(
     if not freq_series and not overhead_series:
         return _no_data_error(namespace, service, data["lookback_minutes"])
 
+    freq_by_pod = _per_pod_sum(_iter_matrix_series(data["gc_frequency_per_min"]))
+    overhead_by_pod = _per_pod_sum(_iter_matrix_series(data["gc_overhead_percent"]))
+    mermaid = _mermaid_block([
+        _mermaid_line("GC collections per minute, busiest pod (all collectors)", "per min",
+                      _downsample(_across_pods(freq_by_pod, "max"), "max")),
+        _mermaid_line("GC overhead %, busiest pod (all collectors)", "%",
+                      _downsample(_across_pods(overhead_by_pod, "max"), "max")),
+    ])
     png_bytes = _render_panels_png(
         title=f"GC frequency & overhead -- {service} ({namespace}), last {data['lookback_minutes']}m",
         panels=[
@@ -219,6 +311,7 @@ def render_gc_behavior_chart(
     return {
         "isError": False,
         "png_bytes": png_bytes,
+        "mermaid": mermaid,
         "caption": (
             f"GC frequency (top) and overhead % (bottom) per pod+generation over the last "
             f"{data['lookback_minutes']}m for {service}/{namespace}."
@@ -247,6 +340,14 @@ def render_gc_memory_correlation_chart(
     if not heap_series and not freq_series:
         return _no_data_error(namespace, service, data["lookback_minutes"])
 
+    heap_lists = [points for _, points in _iter_matrix_series(data["heap_used_bytes_over_time"])]
+    freq_by_pod = _per_pod_sum(_iter_matrix_series(data["gc_frequency_per_min_over_time"]))
+    mermaid = _mermaid_block([
+        _mermaid_line("Heap used, average across pods (GB) -- does the floor rise?", "GB",
+                      _scaled(_downsample(_across_pods(heap_lists, "mean"), "mean"), _GB)),
+        _mermaid_line("GC collections per minute, average per pod -- same time axis", "per min",
+                      _downsample(_across_pods(freq_by_pod, "mean"), "mean")),
+    ])
     png_bytes = _render_dual_axis_png(
         title=f"Heap vs GC frequency -- {service} ({namespace}), last {data['lookback_minutes']}m",
         left_label="heap used (bytes)",
@@ -257,8 +358,62 @@ def render_gc_memory_correlation_chart(
     return {
         "isError": False,
         "png_bytes": png_bytes,
+        "mermaid": mermaid,
         "caption": (
             f"Heap used (solid) vs GC frequency (dashed) over the last {data['lookback_minutes']}m. "
             f"{data['how_to_read']}"
+        ),
+    }
+
+
+def render_thread_trend_chart(
+    namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s"
+) -> dict[str, Any]:
+    """Thread count and threads started per second (churn) per pod over the lookback window, as
+    two stacked panels. A steady count with a high start rate means pool threads are expiring and
+    being recreated; a climbing count means threads are piling up."""
+    window_m = clamp_lookback_minutes(lookback_minutes)
+    selector = namespace_service_selector(namespace, service)
+    end = int(datetime.now(timezone.utc).timestamp())
+    start = end - window_m * 60
+
+    counts = range_query(f"java_lang_Threading_ThreadCount{{{selector}}}", start=str(start), end=str(end), step=step)
+    if counts.get("isError"):
+        return counts
+    started = range_query(
+        f"rate(java_lang_Threading_TotalStartedThreadCount{{{selector}}}[5m])", start=str(start), end=str(end), step=step
+    )
+    if started.get("isError"):
+        return started
+
+    def by_pod(response: dict[str, Any]) -> Series:
+        return {(m.get("pod") or _series_label(m)): pts for m, pts in _iter_matrix_series(response["data"]) if pts}
+
+    count_series, started_series = by_pod(counts), by_pod(started)
+    if not count_series and not started_series:
+        return _no_data_error(namespace, service, window_m)
+
+    png_bytes = _render_panels_png(
+        title=f"Threads -- {service} ({namespace}), last {window_m}m",
+        panels=[
+            {"y_label": "live threads", "series": count_series},
+            {"y_label": "threads started / s", "series": started_series},
+        ],
+    )
+    count_lists, started_lists = list(count_series.values()), list(started_series.values())
+    mermaid = _mermaid_block([
+        _mermaid_line("Live threads, highest pod", "threads", _downsample(_across_pods(count_lists, "max"), "max")),
+        _mermaid_line("Live threads, average across pods", "threads", _downsample(_across_pods(count_lists, "mean"), "mean")),
+        _mermaid_line("Threads started per second (churn), average per pod", "per s",
+                      _downsample(_across_pods(started_lists, "mean"), "mean")),
+    ])
+    return {
+        "isError": False,
+        "png_bytes": png_bytes,
+        "mermaid": mermaid,
+        "caption": (
+            f"Live threads (top) and threads started per second (bottom) per pod over the last {window_m}m "
+            f"for {service}/{namespace}. A flat count with a high start rate is churn; a rising count is "
+            "threads piling up. Count and creation rate only, not thread state."
         ),
     }

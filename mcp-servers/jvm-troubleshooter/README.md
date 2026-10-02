@@ -164,6 +164,15 @@ window) worth surfacing, not a rendering failure to retry past. Rendering is
 headless (matplotlib's `Agg` backend) — no display server needed even when
 this server runs on a headless host.
 
+Some clients pass image results to the model but don't show them to you;
+IBM Bob is one. So every chart is **also saved as a PNG file**, and the tool
+returns a text line with its path next to the image:
+`Chart saved to …/<service>-<chart>-<utc>.png`. The folder is `JVM_CHART_DIR`
+if set. Otherwise it's `runs/charts/` when the server runs from a
+claude-ops-investigator checkout (gitignored), or `./jvm-charts/` under the
+working directory. If the file can't be written, the image is still
+returned, with a note saying so.
+
 Every tool returns the shared result contract:
 `{"isError": false, "data": {...}}` on success, or
 `{"isError": true, "errorCategory": ..., "isRetryable": ..., "message": ..., "attempted": ..., "alternatives": [...]}`

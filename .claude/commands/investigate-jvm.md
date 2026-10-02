@@ -67,9 +67,20 @@ Examples:
      spike (heap keeps returning to baseline each cycle even with elevated
      GC activity) — read the chart's shape, don't infer it from
      `get_gc_memory_correlation`'s raw numbers alone.
+   - OOMKilled restarts, or memory close to the container limit →
+     `get_memory_vs_limit`: working set against the limit (headroom %, with
+     `least_headroom` naming the riskiest pods), split into heap committed,
+     non-heap, direct buffers and `other_bytes` (native). Heap "max" is not
+     the container limit.
    - Native/non-heap memory concerns → `get_memory_pool_breakdown` and
      `get_native_memory_summary` (point-in-time only — there is no chart tool
      for these yet; if the trend matters, re-run at intervals and compare).
+   - High CPU, "Too many open files", or a restart you can't explain →
+     `get_process_resources` (CPU cores against the CPU limit, open vs max
+     file descriptors) and `get_jvm_runtime_info` (uptime per pod: a much
+     younger pod restarted; JVM version per pod: mixed versions).
+   - Classes keep growing hours after start (Metaspace-style pressure) →
+     `get_class_loading_trend` (classes/hour with R², loaded vs unloaded).
    - Committed memory looks high relative to what's actually used → `get_heap_fragmentation`
      for the per-pool committed-vs-used gap. A large gap is space the JVM is holding from the
      OS, not internal fragmentation JMX can see — read its `caveat` before calling it a problem.
@@ -83,7 +94,9 @@ Examples:
      with the deploy's Unix-epoch timestamp, to compare heap/GC/thread averages just before vs.
      just after it. This shows correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_status`. Metrics show
+   - Elevated or climbing thread count → `get_thread_trend` first: count over
+     time, threads *started* per second (a steady count with a high start
+     rate is churn) and deadlocked threads, all from metrics. Metrics show
      only the count, not thread state. If a hang/deadlock is suspected or one
      pod's count is an outlier, ask the human to capture a javacore with
      `bash scripts/capture-javacore.sh <namespace> <pod>` — never run it or

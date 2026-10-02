@@ -42,6 +42,7 @@ from jvm_troubleshooter.tools import (
     incident_tools,
     leak_tools,
     memory_pool_tools,
+    runtime_tools,
     thread_tools,
 )
 
@@ -145,6 +146,52 @@ def get_thread_status(namespace: str, service: str) -> dict[str, Any]:
     """Current live thread count and loaded class count, per pod. This is a COUNT only, not
     thread STATE -- cannot detect hangs/deadlocks. See the returned 'caveat'."""
     return thread_tools.get_thread_status(namespace, service)
+
+
+@mcp.tool()
+def get_thread_trend(namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s") -> dict[str, Any]:
+    """Per pod: thread count now/min/max/change over the window, peak and daemon counts, threads
+    STARTED per second (now and window average) and deadlocked threads. A steady count with a high
+    start rate = thread churn (pool threads expiring and recreated), measured without a thread
+    dump. Count/creation rate only, not thread state -- see the returned 'caveat'."""
+    return runtime_tools.get_thread_trend(namespace, service, lookback_minutes, step)
+
+
+# --- Process, container and runtime -------------------------------------------
+
+
+@mcp.tool()
+def get_process_resources(namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s") -> dict[str, Any]:
+    """Per pod: process CPU in cores (now, window average and max) against the container CPU limit
+    (null = none set), open vs max file descriptors, and resident memory."""
+    return runtime_tools.get_process_resources(namespace, service, lookback_minutes, step)
+
+
+@mcp.tool()
+def get_memory_vs_limit(namespace: str, service: str) -> dict[str, Any]:
+    """Per pod: container memory working set and RSS against the memory limit (headroom %, the
+    OOMKilled risk), next to JVM heap committed/used, non-heap committed, direct buffers and the
+    rest ('other_bytes': JIT, thread stacks, native). 'least_headroom' ranks the riskiest pods.
+    Use this for any OOM-flavored symptom: heap 'max' is not the container limit."""
+    return runtime_tools.get_memory_vs_limit(namespace, service)
+
+
+@mcp.tool()
+def get_class_loading_trend(
+    namespace: str, service: str, lookback_minutes: int = 180, step: str = "120s"
+) -> dict[str, Any]:
+    """Per pod: loaded classes now, linear growth in classes/hour with r_squared, and classes
+    loaded/unloaded during the window. Steady growth hours after start with few unloads suggests
+    a classloader leak -- see the returned 'caveat'."""
+    return runtime_tools.get_class_loading_trend(namespace, service, lookback_minutes, step)
+
+
+@mcp.tool()
+def get_jvm_runtime_info(namespace: str, service: str) -> dict[str, Any]:
+    """Per pod: JVM version, vendor and runtime name, uptime and start time; plus distinct
+    versions, mixed_versions, and the newest/oldest pod -- spots recent restarts and pods running
+    a different JVM build."""
+    return runtime_tools.get_jvm_runtime_info(namespace, service)
 
 
 # --- Cross-signal / triage ---------------------------------------------------

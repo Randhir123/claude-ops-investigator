@@ -17,6 +17,8 @@ def test_get_jvm_incident_snapshot_aggregates_all_signals_on_success(prom_env, m
     monkeypatch.setattr(incident_tools, "get_gc_throughput", lambda *a, **k: _ok({"throughput": "ok"}))
     monkeypatch.setattr(incident_tools, "get_native_memory_summary", lambda *a, **k: _ok({"native": "ok"}))
     monkeypatch.setattr(incident_tools, "get_thread_status", lambda *a, **k: _ok({"threads": "ok"}))
+    monkeypatch.setattr(incident_tools, "get_thread_trend", lambda *a, **k: _ok({"trend": "ok"}))
+    monkeypatch.setattr(incident_tools, "get_memory_vs_limit", lambda *a, **k: _ok({"limit": "ok"}))
 
     result = incident_tools.get_jvm_incident_snapshot("si-dev-001a", "event-data")
 
@@ -28,6 +30,8 @@ def test_get_jvm_incident_snapshot_aggregates_all_signals_on_success(prom_env, m
         "gc_throughput": {"throughput": "ok"},
         "native_memory_summary": {"native": "ok"},
         "thread_status": {"threads": "ok"},
+        "thread_trend": {"trend": "ok"},
+        "memory_vs_limit": {"limit": "ok"},
     }
     assert result["data"]["failed_signals"] == []
 
@@ -40,6 +44,8 @@ def test_get_jvm_incident_snapshot_tolerates_partial_failure(prom_env, monkeypat
         incident_tools, "get_native_memory_summary", lambda *a, **k: _err("native memory query failed")
     )
     monkeypatch.setattr(incident_tools, "get_thread_status", lambda *a, **k: _ok({"threads": "ok"}))
+    monkeypatch.setattr(incident_tools, "get_thread_trend", lambda *a, **k: _ok({"trend": "ok"}))
+    monkeypatch.setattr(incident_tools, "get_memory_vs_limit", lambda *a, **k: _ok({"limit": "ok"}))
 
     result = incident_tools.get_jvm_incident_snapshot("si-dev-001a", "event-data")
 
@@ -47,7 +53,9 @@ def test_get_jvm_incident_snapshot_tolerates_partial_failure(prom_env, monkeypat
     assert result["isError"] is False
     signals = result["data"]["signals"]
     assert "native_memory_summary" not in signals
-    assert set(signals) == {"heap_status", "gc_pause_stats", "gc_throughput", "thread_status"}
+    assert set(signals) == {
+        "heap_status", "gc_pause_stats", "gc_throughput", "thread_status", "thread_trend", "memory_vs_limit",
+    }
 
     failures = result["data"]["failed_signals"]
     assert len(failures) == 1
@@ -67,6 +75,8 @@ def test_get_jvm_incident_snapshot_clamps_lookback(prom_env, monkeypatch):
     monkeypatch.setattr(incident_tools, "get_gc_throughput", lambda *a, **k: _ok({}))
     monkeypatch.setattr(incident_tools, "get_native_memory_summary", lambda *a, **k: _ok({}))
     monkeypatch.setattr(incident_tools, "get_thread_status", lambda *a, **k: _ok({}))
+    monkeypatch.setattr(incident_tools, "get_thread_trend", lambda *a, **k: _ok({}))
+    monkeypatch.setattr(incident_tools, "get_memory_vs_limit", lambda *a, **k: _ok({}))
 
     incident_tools.get_jvm_incident_snapshot("si-dev-001a", "event-data", lookback_minutes=999_999)
 

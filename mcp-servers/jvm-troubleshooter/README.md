@@ -111,6 +111,11 @@ when set. See `.env.example`.
 | `get_heap_fragmentation` | Committed-vs-used per heap pool — space held from the OS but unused |
 | `get_memory_allocation_rate` | Estimated young-gen allocation rate (MB/s, GB/hr) — churn, not a leak signal |
 | `get_thread_status` | Live thread count + loaded class count per pod |
+| `get_thread_trend` | Thread count over time, peak/daemon, threads **started** per second (churn) and deadlocked threads, per pod |
+| `get_process_resources` | Process CPU cores (now/avg/max) vs the container CPU limit, open vs max file descriptors, RSS |
+| `get_memory_vs_limit` | Container working set vs memory limit (headroom %, riskiest pods), split into heap, non-heap, direct buffers and native |
+| `get_class_loading_trend` | Loaded classes over time, growth in classes/hour (R²), loaded vs unloaded in the window |
+| `get_jvm_runtime_info` | JVM version/vendor per pod, uptime, start time, mixed versions, newest/oldest pod |
 | `get_gc_memory_correlation` | Heap trend + GC frequency trend lined up, for leak-vs-load-spike triage |
 | `get_memory_leak_indicator` | Tenured/old-gen trend fitted with linear regression — slope, R², days-to-full |
 | `get_before_after_deploy_comparison` | Heap/GC/thread averages just before vs. just after a deploy timestamp |
@@ -118,6 +123,19 @@ when set. See `.env.example`.
 | `render_heap_trend_chart` | PNG line chart of heap used/max per pod over the lookback window |
 | `render_gc_behavior_chart` | PNG chart of GC frequency and overhead per pod+generation over the lookback window |
 | `render_gc_memory_correlation_chart` | PNG dual-axis chart overlaying heap used against GC frequency — the leak-vs-load-spike visual |
+
+The five runtime and resource tools (`get_thread_trend` through
+`get_jvm_runtime_info`) return compact **per-pod summaries keyed by pod
+name** rather than raw Prometheus vectors. Besides the `java_lang_*` MBeans,
+they read the `jvm_*` / `process_*` metrics the JMX Exporter java agent also
+emits. `get_memory_vs_limit` additionally needs cAdvisor
+(`container_memory_working_set_bytes`, `container_memory_rss`) and
+kube-state-metrics (`kube_pod_container_resource_limits`) in the same
+Prometheus. It matches them to the JVM pods by the `pod` and `container`
+labels of the JVM series. Missing metrics come back as `null` fields
+(e.g. `cpu_limit_cores` when no CPU limit is set), never as a guessed value.
+`get_jvm_incident_snapshot` includes `get_thread_trend` and
+`get_memory_vs_limit`.
 
 ### Charts
 

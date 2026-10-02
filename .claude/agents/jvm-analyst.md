@@ -20,6 +20,11 @@ tools:
   - mcp__jvm-troubleshooter__render_heap_trend_chart
   - mcp__jvm-troubleshooter__render_gc_behavior_chart
   - mcp__jvm-troubleshooter__render_gc_memory_correlation_chart
+  - mcp__jvm-troubleshooter__get_thread_trend
+  - mcp__jvm-troubleshooter__get_process_resources
+  - mcp__jvm-troubleshooter__get_memory_vs_limit
+  - mcp__jvm-troubleshooter__get_class_loading_trend
+  - mcp__jvm-troubleshooter__get_jvm_runtime_info
   - mcp__claude-ops-investigator__evidence_store_external
   - mcp__claude-ops-investigator__jvm_get_gc_log_events
   - mcp__claude-ops-investigator__jvm_analyze_gc_log
@@ -119,11 +124,24 @@ re-run queries another wave already covered.
   human enables verbose GC), never as "no GC activity".
 - **Never treat heap "max" as the pod's memory limit.** It's the JVM's own
   -Xmx-derived ceiling, not `resources.limits.memory` — a pod can be
-  OOM-killed with heap usage still low. If OOM is the suspected symptom, pull
-  `get_native_memory_summary` alongside `get_heap_status` before concluding
-  heap pressure is or isn't the cause, and hand off to k8s-evidence-collector
-  for the pod's actual `resources.limits.memory` and last-termination reason
-  (`k8s_describe_pod`) — this subagent has no visibility into pod spec.
+  OOM-killed with heap usage still low. If OOM is the suspected symptom, call
+  `get_memory_vs_limit` first: container working set against the memory
+  limit (headroom %), split into heap committed, non-heap, direct buffers and
+  everything else (`other_bytes` = native). A large or growing `other_bytes`
+  points at native memory, not the heap. Pair it with
+  `get_native_memory_summary` and `get_heap_status`, and hand off to
+  k8s-evidence-collector for the last-termination reason (`k8s_describe_pod`).
+- **CPU, file descriptors, class loading, restarts:** `get_process_resources`
+  (CPU cores against the CPU limit, open vs max file descriptors),
+  `get_class_loading_trend` (classes/hour, for classloader leaks) and
+  `get_jvm_runtime_info` (JVM version per pod, uptime, newest/oldest pod: a
+  much younger pod restarted). Mixed JVM versions across pods are worth
+  reporting on their own.
+- **Measure thread churn and deadlocks from metrics first.** `get_thread_trend`
+  gives the count over time, threads *started* per second and deadlocked
+  threads, with no thread dump needed. A steady count with a high start rate
+  is churn; ask for javacores only to find *which* pool churns or whether
+  threads are stuck.
 - **Never treat thread count as thread state.** A normal/steady count does
   not rule out a hang or deadlock among a subset of threads. If a hang is
   suspected, or an outlier thread count needs explaining, a thread dump

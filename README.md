@@ -1,6 +1,6 @@
 # Claude Ops Investigator
 
-An MCP-based Kubernetes incident investigation tool with two supported agent harnesses — Claude Code and IBM Bob Shell — combining live cluster signals, Prometheus, log search, runbooks, evidence memory, and structured incident reports.
+An MCP-based Kubernetes incident investigation tool with two supported agent harnesses — Claude Code and IBM Bob Shell — combining live cluster signals, Prometheus, log search, runbooks, evidence memory, OpenJ9 JVM troubleshooting (GC logs, thread dumps), and structured incident reports.
 
 Claude Ops Investigator helps engineers investigate Kubernetes incidents safely by combining read-only operational tools, external evidence storage, compact investigation memory, and human-controlled remediation boundaries.
 
@@ -18,6 +18,11 @@ The goal is not to give an AI unrestricted production access. The goal is to exp
 - Hooks and gates for destructive actions
 - Structured incident-report output
 - Human escalation for risky or ambiguous actions
+- A JVM specialist (`jvm-analyst`) backed by a separate `jvm-troubleshooter`
+  MCP server: GC, heap, memory pools, threads, from Prometheus/JMX Exporter
+- Real GC logs and thread dumps: human-run capture scripts plus read-only
+  analysis tools (true per-pause GC stats, stuck vs busy threads, thread churn)
+- Prometheus through Grafana's datasource proxy, no port-forward needed
 
 ## Safety rule
 
@@ -38,7 +43,14 @@ Blocked operations include:
 - `kubectl scale`
 - `kubectl rollout restart`
 - `helm upgrade`
-- `kubectl exec` by default
+- `kubectl exec`
+
+Agents never `exec` into a pod. The only `kubectl exec` in the project lives
+in three **human-run** scripts: `scripts/capture-gclog.sh`,
+`scripts/capture-javacore.sh` and `scripts/cleanup-javacores.sh`. They refuse
+to run without an interactive terminal, and the Claude Code shell hook blocks
+agents from running them. Agents only analyze what you capture (see
+[GC logs and thread dumps](#gc-logs-and-thread-dumps)).
 
 ## Quick start
 
@@ -46,8 +58,17 @@ Blocked operations include:
 cd claude-ops-investigator
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,mcp]"                         # core package + MCP server
+pip install -e "mcp-servers/jvm-troubleshooter[dev]" # second MCP server (JVM)
 ```
+
+Install both packages into **the Python your harness uses to launch MCP
+servers**. Claude Code started from this shell uses `.venv`. IBM Bob may use a
+different interpreter (e.g. a pyenv Python), so run the two `pip install`
+lines with that interpreter too. Otherwise the server can't import its
+package, fails to start, and Bob silently drops it. Bob's MCP log
+(`~/Library/Application Support/IBM Bob/logs/<session>/…/IBM Bob MCP.log` on
+macOS) shows the `ModuleNotFoundError`.
 
 Check Kubernetes access:
 
@@ -63,10 +84,11 @@ Run a read-only snapshot:
 python -m claude_ops.main investigate --namespace si --service event-data --since-minutes 60
 ```
 
-Run tests:
+Run tests (two independent suites):
 
 ```bash
-pytest
+pytest                                        # core: tests/
+(cd mcp-servers/jvm-troubleshooter && pytest)  # jvm-troubleshooter
 ```
 
 ## Slash commands
@@ -143,12 +165,18 @@ What it does not do:
 
 A lightweight, standalone JVM health check against one OpenJ9/IBM Semeru
 service — GC behavior, heap, memory pools, threads, allocation rate, leak
-trend — using only `jvm-troubleshooter`'s own tools, no coordinator/subagent
-delegation or evidence store required:
+trend — with no coordinator/subagent delegation:
 
 ```
 /investigate-jvm namespace=<namespace> service=<service> lookback_minutes=<minutes>
 ```
+
+It starts from `jvm-troubleshooter`'s metrics (a one-call snapshot, then
+focused tools and charts) and names the pods that stand out. When metrics
+aren't enough, it tells you which pod to capture a GC log or thread dumps
+from, and which script to run. It then analyzes what you saved with the
+`jvm_*` tools, and reminds you to clean up the dumps afterwards. See
+[GC logs and thread dumps](#gc-logs-and-thread-dumps).
 
 Use this for a quick point check; use `/investigate-incident` (which routes
 to `jvm-analyst` automatically for a GC/heap/OOM-flavored symptom) when the
@@ -179,13 +207,17 @@ and `AGENTS.md` for the full workflow.
 #### `/investigate-jvm`
 
 Same lightweight, standalone JVM health check as the Claude Code version
-above, no mode switch required:
+above, including the GC-log and thread-dump hand-off, no mode switch
+required:
 
 ```
 /investigate-jvm namespace=<namespace> service=<service> lookback_minutes=<minutes>
 ```
 
-See `.bob/commands/investigate-jvm.md` for the full workflow.
+See `.bob/commands/investigate-jvm.md` for the full workflow. Bob may also
+auto-generate a skill version of it under `.bob/skills/` from an older copy
+of the command. If its answers never mention the capture scripts or `jvm_*`
+tools, start your request with "follow `.bob/commands/investigate-jvm.md`".
 
 #### `/propose-fix`
 
@@ -258,7 +290,23 @@ Queries then go to
 same read-only PromQL calls, just proxied. The credential is redacted from
 any error the tools return and never stored as evidence.
 `prom_ensure_connection` checks reachability through the proxy in this mode
-and never starts a port-forward. Quick check:
+and never starts a port-forward.
+
+Finding the right datasource:
+
+- **A name is not a UID.** Grafana returns 404 if you put the datasource's
+  *name* (e.g. `my-cluster-prom`) where its UID goes. List them with
+  `GET <GRAFANA_URL>/api/datasources` using the same credential, then take
+  the `uid` field.
+- **Pick the datasource that matches your cluster.** Several datasources can
+  carry the same namespace from different clusters. Choose the one whose
+  pod names match `kubectl get pods` on your current context.
+- **Check `JVM_LABEL_KEY` against the real series.** It's set per server in
+  `.mcp.json` / `.bob/mcp.json`. A wrong value returns empty results, not an
+  error. Our JMX Exporter series are labeled by `job`; confirm with
+  `count by (job) (java_lang_GarbageCollector_CollectionCount)`.
+
+Quick check:
 
 ```bash
 curl -s -H "Authorization: Bearer $GRAFANA_API_TOKEN" \
@@ -324,10 +372,10 @@ JSONL audit logs under `runs/` (gitignored, like the rest of that directory).
 
 | Hook | Event | What it does |
 |---|---|---|
-| `block_unsafe_shell.py` | `PreToolUse` on `Bash` | Denies raw shell `kubectl delete/apply/patch/scale/rollout restart/exec` and `helm upgrade` — the second gate for a destructive command reaching `Bash` directly, bypassing the typed MCP tools that `hooks.py::validate_kubectl_verb` already gates. |
+| `block_unsafe_shell.py` | `PreToolUse` on `Bash` | Denies raw shell `kubectl delete/apply/patch/scale/rollout restart/exec` and `helm upgrade` — the second gate for a destructive command reaching `Bash` directly, bypassing the typed MCP tools that `hooks.py::validate_kubectl_verb` already gates. Also denies *running* the human-only `scripts/capture-gclog.sh`, `capture-javacore.sh` and `cleanup-javacores.sh`, including inside `sh -c '…'` / `bash -lc "…"`; reading or grepping them stays allowed. Commands are split on `;` `|` `&&` `&` only outside quotes. The `kubectl …` patterns match anywhere in a segment, so a command that merely *mentions* those words (a `grep` pattern, a `git commit -m`) is denied too: put such text in a file and use `-F`. |
 | `audit_mcp_tool_call.py` | `PostToolUse` on `mcp__claude-ops-investigator__.*` | Appends `{tool_name, timestamp, status, evidence_ref, session_id}` to `runs/mcp-tool-audit.jsonl` for every completed MCP tool call. |
 | `audit_subagent_lifecycle.py` | `SubagentStart` / `SubagentStop` | Appends `{event, timestamp, session_id, subagent_type, description}` to `runs/subagent-audit.jsonl`. |
-| `validate_final_report.py` | `Stop` | If the last assistant message looks like an incident report (mentions "Subagent usage audit", "incident report", or `requires_human`), checks it contains `evidence_ref`, a "Subagent usage audit" table, `ruled_out`, `unknowns`, and an explicit confirmed/not-confirmed statement — and blocks the stop with a reason if any are missing. Ordinary conversational turns are left alone. |
+| `validate_final_report.py` | `Stop` | If the last assistant message looks like an incident report (mentions "Subagent usage audit", "incident report", or `requires_human`), checks it contains `evidence_ref`, a "Subagent usage audit" table, `ruled_out`, `unknowns`, and an explicit confirmed/not-confirmed statement — and blocks the stop with a reason if any are missing. Known issue: it can also fire on ordinary replies that merely discuss investigations or this workflow; there's no report to fix in that case, so the feedback can be ignored. |
 
 ### Disabling hooks locally
 
@@ -401,7 +449,12 @@ Tools:
 - `ibm_logs_search_errors`
 - `ibm_logs_search_probe_failures`
 - `ibm_logs_search_text`
+- `jvm_get_gc_log_events` — verbose GC events from `kubectl logs` (GC log on stderr)
+- `jvm_analyze_gc_log` — GC log files under `runs/gclogs/`
+- `jvm_analyze_javacore` — one javacore under `runs/javacores/`
+- `jvm_compare_javacores` — a series of javacores: stuck vs busy threads, thread churn
 - `evidence_get_detail`
+- `evidence_store_external` — archive another server's result (e.g. `jvm-troubleshooter`'s) as evidence with an `evidence_ref`
 
 Prompt:
 - `investigate_incident`
@@ -409,26 +462,62 @@ Prompt:
 ### Second MCP server: `jvm-troubleshooter`
 
 A dedicated, independently-testable MCP server for OpenJ9/IBM Semeru JVM
-internals (GC, heap, memory pools, threads) lives alongside this project at
-`mcp-servers/jvm-troubleshooter/` — its own `pyproject.toml`, `src/`,
-`tests/`, and `README.md`, but committed in this same repo/PR rather than as
-a separate GitHub project, so the whole `jvm-analyst` feature (specialist +
-its server + routing) reviews and ships as one change.
+internals (GC, heap, memory pools, threads) lives at
+`mcp-servers/jvm-troubleshooter/`, with its own `pyproject.toml`, `src/`,
+`tests/` and `README.md`.
+
+#### Repository layout
 
 ```text
-mcp-servers/jvm-troubleshooter/src/jvm_troubleshooter/mcp/server.py = second local MCP server
-.mcp.json / .bob/mcp.json = both declare it as "jvm-troubleshooter", PYTHONPATH pointed at
-                            ${PWD}/mcp-servers/jvm-troubleshooter/src (same pattern as the
-                            main server's own ${PWD}/src)
+src/claude_ops/                 core application: tool layer, evidence store, safety gate (hooks.py),
+                                CLI (claude_ops.main), and its MCP front-end (claude_ops/mcp/server.py)
+data/  runs/  artifacts/        runbooks + service catalog; investigation scratchpads, captures,
+                                audit logs; archived evidence (runs/ and artifacts/ are gitignored)
+mcp-servers/jvm-troubleshooter/ standalone add-on MCP server; imports nothing from claude_ops
+scripts/                        human-run capture/cleanup scripts, MCP smoke client
+.claude/   .bob/                the two agent harnesses: agents/modes, commands, rules, hooks
+docs/                           guides (Bob harness, GC logs and thread dumps)
 ```
 
+The asymmetry is deliberate. `claude_ops` is more than an MCP server: the
+CLI and the safety gate share its tool layer, and it relies on the repo-level
+`data/`, `runs/` and `artifacts/`. `mcp-servers/` holds servers that stand on
+their own. Any Java team can install `jvm-troubleshooter` without the rest of
+this project, which is why it carries its own small copies of `errors.py` and
+the Prometheus/Grafana endpoint resolver instead of importing them.
+
+#### How the two servers work together
+
+They're combined in the **harness**, not in code:
+
+1. `.mcp.json` (Claude Code) and `.bob/mcp.json` (Bob) register both servers,
+   so agents see one toolbox, namespaced per server
+   (`mcp__jvm-troubleshooter__…`, `mcp__claude-ops-investigator__…`).
+2. `jvm-analyst` is the one agent whose tool allowlist spans both servers.
+   The coordinator routes GC-, heap-, memory- or OOM-flavored symptoms on JVM
+   services to it.
+3. Every finding in a report needs an `evidence_ref` from
+   `claude-ops-investigator`'s evidence store, and `jvm-troubleshooter` has no
+   store of its own. So `jvm-analyst` archives each result it cites through
+   `evidence_store_external`, and `incident-reporter` cites it like any other
+   evidence. The `jvm_*` GC-log and javacore tools live in
+   `claude-ops-investigator` and produce refs directly.
+
+#### Configuration
+
+- **Install** the package into the Python your harness launches it with (see
+  [Quick start](#quick-start)). The `PYTHONPATH=${PWD}/…` in the MCP configs
+  isn't reliable everywhere; Bob, for example, doesn't apply it.
+- **`JVM_LABEL_KEY`** (in each MCP config's `env` block) must match the
+  Prometheus label your JMX Exporter series use to name the service. A wrong
+  value returns empty results, not an error.
+- **Grafana settings** (`GRAFANA_*`) and credentials go in the repo-root
+  `.env`, which this server also loads at startup. Setting `GRAFANA_URL` takes
+  precedence over the `PROMETHEUS_URL` in the MCP config.
+
 It's backed by Prometheus (or Thanos Query) scraping OpenJ9 JVMs via the
-standard Prometheus JMX Exporter — a different metric-naming convention than
-this project's own `prom_*` tools assume, so it ships its own PromQL and its
-own `PROMETHEUS_URL`/`JVM_LABEL_KEY`. Because `.mcp.json`'s `env` block for
-this entry sets those directly (mirroring how the entry itself is
-configured) rather than relying on `.env`, set real values there rather than
-in `.env` for this specific server.
+standard Prometheus JMX Exporter, a different metric-naming convention than
+this project's own `prom_*` tools assume, so it ships its own PromQL.
 
 Its 18 tools (GC activity/pause/throughput/behavior-over-time, heap
 status/trend, memory-pool breakdown/native-memory/fragmentation, allocation

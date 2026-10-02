@@ -71,6 +71,10 @@ $ARGUMENTS
      (young-gen churn) and `get_memory_leak_indicator` (regression-fitted
      tenured/old-gen trend: slope, R², naive days-to-full). Neither
      substitutes for the other — report both caveats verbatim if surfaced.
+   - The user names an incident time → `get_incident_window(namespace,
+     service, start, end)` with those times, not a lookback ending now.
+     "Is this normal?" → `get_baseline_comparison` (same hour/weekday
+     baseline; report its caveat). High CPU → `get_cpu_gc_correlation`.
    - Symptom onset correlates with a recent deploy/restart/config change →
      `get_before_after_deploy_comparison` with the deploy's Unix-epoch
      timestamp. Correlation in time only — corroborate against actual

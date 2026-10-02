@@ -62,7 +62,8 @@ make about the trend still carries a real `evidence_ref`.
   `get_before_after_deploy_comparison`, `render_heap_trend_chart`,
   `render_gc_behavior_chart`, `render_gc_memory_correlation_chart`,
   `get_thread_trend`, `get_process_resources`, `get_memory_vs_limit`,
-  `get_class_loading_trend`, `get_jvm_runtime_info`, plus
+  `get_class_loading_trend`, `get_jvm_runtime_info`, `get_incident_window`,
+  `get_baseline_comparison`, `get_cpu_gc_correlation`, plus
   `claude-ops-investigator`'s own `evidence_store_external`,
   `jvm_get_gc_log_events`, `jvm_analyze_gc_log`, `jvm_analyze_javacore` and
   `jvm_compare_javacores` (the last four archive
@@ -112,6 +113,14 @@ make about the trend still carries a real `evidence_ref`.
   `get_jvm_runtime_info` (JVM version per pod, uptime, newest/oldest pod: a
   much younger pod restarted). Mixed JVM versions across pods are worth
   reporting on their own.
+- **Use explicit windows when the incident has times.** When your task gives
+  an incident start/end, call `get_incident_window(namespace, service, start,
+  end)` rather than a lookback ending now. It gives per-pod avg/max with
+  *when* the max happened, plus pods that appeared or vanished mid-window
+  (restarts). For "is this normal?", use `get_baseline_comparison` against a
+  baseline at the same hour and weekday, and report its caveat. For high
+  CPU, use `get_cpu_gc_correlation`. A high r with low GC overhead means load
+  drives both, not GC driving CPU.
 - **Measure thread churn and deadlocks from metrics first.** `get_thread_trend`
   gives the count over time, threads *started* per second and deadlocked
   threads, with no thread dump needed. A steady count with a high start rate

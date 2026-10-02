@@ -25,6 +25,9 @@ tools:
   - mcp__jvm-troubleshooter__get_memory_vs_limit
   - mcp__jvm-troubleshooter__get_class_loading_trend
   - mcp__jvm-troubleshooter__get_jvm_runtime_info
+  - mcp__jvm-troubleshooter__get_incident_window
+  - mcp__jvm-troubleshooter__get_baseline_comparison
+  - mcp__jvm-troubleshooter__get_cpu_gc_correlation
   - mcp__claude-ops-investigator__evidence_store_external
   - mcp__claude-ops-investigator__jvm_get_gc_log_events
   - mcp__claude-ops-investigator__jvm_analyze_gc_log
@@ -137,6 +140,15 @@ re-run queries another wave already covered.
   `get_jvm_runtime_info` (JVM version per pod, uptime, newest/oldest pod: a
   much younger pod restarted). Mixed JVM versions across pods are worth
   reporting on their own.
+- **Use explicit windows when the incident has times.** When your task gives
+  an incident start/end (an alert time, a reported outage), call
+  `get_incident_window(namespace, service, start, end)` rather than a
+  lookback ending now. It gives per-pod avg/max with *when* the max
+  happened, plus pods that appeared or vanished mid-window (restarts). For
+  "is this normal?", use `get_baseline_comparison` against a baseline at
+  the same hour and weekday, and report its caveat. For high CPU, use
+  `get_cpu_gc_correlation`. A high r with low GC overhead means load drives
+  both, not GC driving CPU.
 - **Measure thread churn and deadlocks from metrics first.** `get_thread_trend`
   gives the count over time, threads *started* per second and deadlocked
   threads, with no thread dump needed. A steady count with a high start rate

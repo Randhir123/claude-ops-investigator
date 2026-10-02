@@ -44,6 +44,7 @@ from jvm_troubleshooter.tools import (
     memory_pool_tools,
     runtime_tools,
     thread_tools,
+    window_tools,
 )
 
 load_dotenv()
@@ -192,6 +193,45 @@ def get_jvm_runtime_info(namespace: str, service: str) -> dict[str, Any]:
     versions, mixed_versions, and the newest/oldest pod -- spots recent restarts and pods running
     a different JVM build."""
     return runtime_tools.get_jvm_runtime_info(namespace, service)
+
+
+# --- Time windows -------------------------------------------------------------
+
+
+@mcp.tool()
+def get_incident_window(namespace: str, service: str, start: str, end: str, step: str = "auto") -> dict[str, Any]:
+    """Heap used %, GC overhead %, GCs/min, thread count, threads started/s and CPU cores for an
+    EXPLICIT window (start/end as ISO 8601 such as 2026-10-01T21:17:00Z, or Unix epoch seconds;
+    max 7 days). Per pod: avg, max and when the max happened. Service-wide: pooled
+    avg/p50/p95/p99/max. pods_seen shows pods that started or stopped mid-window (restarts)."""
+    return window_tools.get_incident_window(namespace, service, start, end, step)
+
+
+@mcp.tool()
+def get_baseline_comparison(
+    namespace: str,
+    service: str,
+    baseline_start: str,
+    baseline_end: str,
+    current_start: str | None = None,
+    current_end: str | None = None,
+    current_minutes: int = 60,
+    step: str = "auto",
+) -> dict[str, Any]:
+    """Compare a baseline window with a current window (explicit, or the last current_minutes):
+    service-wide avg/p50/p95/p99/max of heap, GC, threads, churn and CPU, with the % change of avg
+    and p95. Pick a baseline at the same hour/weekday with similar traffic -- see 'caveat'."""
+    return window_tools.get_baseline_comparison(
+        namespace, service, baseline_start, baseline_end, current_start, current_end, current_minutes, step
+    )
+
+
+@mcp.tool()
+def get_cpu_gc_correlation(namespace: str, service: str, lookback_minutes: int = 60, step: str = "60s") -> dict[str, Any]:
+    """Per pod: Pearson r between process CPU and GC overhead over the window, with their averages.
+    High r + high GC overhead = GC drives CPU; high r + low overhead = load drives both; low r =
+    CPU is application work. See 'caveat'."""
+    return window_tools.get_cpu_gc_correlation(namespace, service, lookback_minutes, step)
 
 
 # --- Cross-signal / triage ---------------------------------------------------

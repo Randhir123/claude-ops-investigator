@@ -90,6 +90,12 @@ Examples:
      naive days-to-full) — the closest single-number leak signal this project offers. Neither
      substitutes for the other: allocation rate is churn, the leak indicator is the old-gen
      trend; report both caveats verbatim if either number is surfaced.
+   - The user names an incident time ("the alert at 21:17", "between 2 and 3
+     am") → `get_incident_window(namespace, service, start, end)` with those
+     times (ISO 8601 or epoch), not a lookback ending now. For "is this
+     normal?" → `get_baseline_comparison` against the same hour/weekday
+     earlier; report its caveat. High CPU → `get_cpu_gc_correlation` (high r
+     with low GC overhead = load drives both, not GC).
    - Symptom onset correlates with a recent deploy/restart/config change → `get_before_after_deploy_comparison`
      with the deploy's Unix-epoch timestamp, to compare heap/GC/thread averages just before vs.
      just after it. This shows correlation in time only — corroborate against actual

@@ -21,6 +21,7 @@ from jvm_troubleshooter.tools.gc_tools import get_gc_pause_stats, get_gc_through
 from jvm_troubleshooter.tools.heap_tools import get_heap_status
 from jvm_troubleshooter.tools.memory_pool_tools import get_native_memory_summary
 from jvm_troubleshooter.tools.prometheus_client import clamp_lookback_minutes
+from jvm_troubleshooter.tools.runtime_tools import get_memory_vs_limit, get_thread_trend
 from jvm_troubleshooter.tools.thread_tools import get_thread_status
 
 
@@ -39,6 +40,8 @@ def get_jvm_incident_snapshot(namespace: str, service: str, lookback_minutes: in
         "gc_throughput": lambda: get_gc_throughput(namespace, service, lookback_minutes=window_m),
         "native_memory_summary": lambda: get_native_memory_summary(namespace, service),
         "thread_status": lambda: get_thread_status(namespace, service),
+        "thread_trend": lambda: get_thread_trend(namespace, service, lookback_minutes=window_m),
+        "memory_vs_limit": lambda: get_memory_vs_limit(namespace, service),
     }
 
     results: dict[str, Any] = {}
@@ -63,6 +66,9 @@ def get_jvm_incident_snapshot(namespace: str, service: str, lookback_minutes: in
                 "get_memory_pool_breakdown for the full per-pool picture. GC pause max/min carry "
                 "the bucket-averaging caveat -- see gc_pause_stats.caveat when present. Thread "
                 "count carries its own caveat -- see thread_status.caveat when present. "
+                "thread_trend adds threads started per second (churn) and deadlocked threads; "
+                "memory_vs_limit.least_headroom names the pods closest to their container memory "
+                "limit (OOMKilled risk). "
                 "failed_signals lists any sub-query that errored; treat those as gaps, not as "
                 "confirmation that the corresponding metric is normal."
             ),

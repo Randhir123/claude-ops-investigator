@@ -54,8 +54,15 @@ $ARGUMENTS
      `render_heap_trend_chart` (sawtooth vs. rising floor) and
      `render_gc_memory_correlation_chart` (real leak vs. load spike) — read
      the chart's shape, don't infer it from raw numbers alone.
+   - OOMKilled restarts, or memory close to the container limit →
+     `get_memory_vs_limit` (working set against the limit, headroom %,
+     `least_headroom`; heap / non-heap / direct / native split).
    - Native/non-heap memory concerns → `get_memory_pool_breakdown` and
      `get_native_memory_summary` (point-in-time only).
+   - High CPU, "Too many open files", or an unexplained restart →
+     `get_process_resources` and `get_jvm_runtime_info` (uptime, JVM version
+     per pod).
+   - Classes keep growing hours after start → `get_class_loading_trend`.
    - Committed memory looks high relative to what's used → `get_heap_fragmentation`
      for the per-pool committed-vs-used gap — space held from the OS, not
      internal fragmentation JMX can see; read its `caveat` before calling it
@@ -68,8 +75,9 @@ $ARGUMENTS
      `get_before_after_deploy_comparison` with the deploy's Unix-epoch
      timestamp. Correlation in time only — corroborate against actual
      deployment/restart history before calling the deploy the cause.
-   - Elevated or climbing thread count → `get_thread_status` (count only,
-     not state). If a hang/deadlock is suspected or one pod is an outlier,
+   - Elevated or climbing thread count → `get_thread_trend` first (count over
+     time, threads started per second = churn, deadlocked threads; count
+     only, not state). If a hang/deadlock is suspected or one pod is an outlier,
      ask the human to run `bash scripts/capture-javacore.sh <namespace>
      <pod>` — never run it or any exec yourself — then call
      `jvm_analyze_javacore("runs/javacores/<file>.txt")`. For a suspected

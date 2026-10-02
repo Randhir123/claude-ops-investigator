@@ -150,7 +150,9 @@ How to read it:
 - **Large numbers in thread names mean churn.** For example,
   `tsdquery-rest-1-thread-1447506` means that pool has created 1.4 million
   threads since start. That usually points to an executor created per
-  request or a very short keep-alive.
+  request or a very short keep-alive. You don't need dumps to *measure*
+  churn: `get_thread_trend` reports threads started per second for every pod
+  from metrics. Dumps tell you *which* pool is churning.
 - **Deadlocks or many threads blocked on one owner** are the real red flags.
   The report lists them directly.
 
@@ -185,7 +187,7 @@ Pick the interval to suit the question:
 | Goal | Series |
 |---|---|
 | Find stuck threads during a stall or latency spike | `-n 5 -i 10`, *while it's happening* |
-| Measure thread churn | `-n 3 -i 30`, any time |
+| Find *which* pool churns (the rate itself comes from `get_thread_trend`, no dumps needed) | `-n 3 -i 30`, any time |
 | Baseline under normal load | `-n 3 -i 60` |
 
 Each dump briefly pauses the JVM and leaves a file of a few MB in the pod, so

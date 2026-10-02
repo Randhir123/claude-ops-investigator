@@ -519,12 +519,20 @@ It's backed by Prometheus (or Thanos Query) scraping OpenJ9 JVMs via the
 standard Prometheus JMX Exporter, a different metric-naming convention than
 this project's own `prom_*` tools assume, so it ships its own PromQL.
 
-Its 18 tools (GC activity/pause/throughput/behavior-over-time, heap
-status/trend, memory-pool breakdown/native-memory/fragmentation, allocation
-rate, leak indicator, thread status, GC-memory correlation, before/after
-deploy comparison, one-call incident snapshot, and three PNG chart renderers)
-are documented in full — including caveats on what each one can't see — in
-[`mcp-servers/jvm-troubleshooter/README.md`](mcp-servers/jvm-troubleshooter/README.md).
+Its 23 tools are documented in full, including caveats on what each one
+can't see, in
+[`mcp-servers/jvm-troubleshooter/README.md`](mcp-servers/jvm-troubleshooter/README.md):
+
+- **GC:** activity, pause stats, throughput, behavior over time.
+- **Heap and memory:** heap status and trend, memory-pool breakdown, native
+  memory, fragmentation, allocation rate, leak indicator, and **memory vs the
+  container limit** (headroom, heap / non-heap / direct / native split).
+- **Threads:** thread status, and **thread trend with threads started per
+  second (churn) and deadlocked threads**.
+- **Process and runtime:** **process CPU and file descriptors**, **class
+  loading trend**, **JVM version and uptime per pod**.
+- **Cross-signal:** GC-memory correlation, before/after deploy comparison, a
+  one-call incident snapshot, and three PNG chart renderers.
 Run its own test suite (independent of this project's `pytest` invocation,
 which only looks at the root `tests/`) with:
 

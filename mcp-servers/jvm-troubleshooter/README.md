@@ -18,7 +18,8 @@ such as [claude-ops-investigator](https://github.com/Randhir123/claude-ops-inves
   its subagents, or its evidence-store conventions.
 - **Composable, not load-bearing.** An investigator integrates this by
   pointing an MCP client config at a second server (see
-  [`docs/integration-with-claude-ops-investigator.md`](docs/integration-with-claude-ops-investigator.md)),
+  ["How the two servers work together"](../../README.md#how-the-two-servers-work-together)
+  in the claude-ops-investigator README),
   not by importing this package's internals. Either project can evolve, or be
   replaced, without breaking the other.
 - **Matches how the ecosystem is already shaped.** Prometheus itself,

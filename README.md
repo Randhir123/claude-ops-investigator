@@ -551,18 +551,69 @@ investigation flow, see `/investigate-jvm` under Slash commands above.
 
 ### Grafana dashboard
 
-[`dashboards/jvm-troubleshooting.json`](dashboards/jvm-troubleshooting.json) puts
-the same JVM signals on one Grafana board, for when you want to watch them
-yourself:
-- memory against the container limit, heap, and tenured after GC (the leak signal)
-- memory pools
-- GC overhead, frequency and pauses
-- live threads and thread churn
-- CPU, file descriptors and class loading
-- JVM version and uptime per pod
+[`dashboards/jvm-troubleshooting.json`](dashboards/jvm-troubleshooting.json)
+("JVM troubleshooting (OpenJ9)") shows the same JVM signals the
+`jvm-troubleshooter` tools read, on one Grafana board. Use it to watch a
+service yourself, or to see what the agent reports at a glance.
 
-Import it in Grafana and pick the data source, namespace and service. See
-[`dashboards/README.md`](dashboards/README.md).
+**Import**
+1. In Grafana: **Dashboards → New → Import → Upload dashboard JSON file**.
+2. Pick the **Data source**: the Prometheus or Thanos datasource that scrapes
+   your JVMs.
+3. Pick the **Namespace**, the **Service** and the **Pods** (All, or a
+   subset).
+4. If **Service** stays empty, change **Service label** to the label your JMX
+   Exporter series use to name the service. It's the same setting as the MCP
+   server's `JVM_LABEL_KEY`: `job` (default), `app` or `service`.
+
+The board's URL keeps the selected variables, so it can be shared as a link
+to the same view.
+
+**What's on it** (24 panels; the ⓘ on each panel says how to read it)
+
+| Section | Panels |
+|---|---|
+| At a glance | JVM pods, lowest memory headroom, highest heap used, highest GC overhead, threads started per second, deadlocked threads |
+| Memory | Container memory vs limit, memory headroom, heap used vs max, tenured (old gen) after GC, memory pools, non-heap and direct buffers |
+| Garbage collection | GC overhead per pod, collections per minute (scavenge / global), average pause by collector, heap used vs GC frequency |
+| Threads | Live threads, threads started per second, daemon threads |
+| CPU, file descriptors, class loading | Process CPU (with the CPU limit when set), CPU vs GC overhead, open file descriptors (% of max), classes loaded and unloaded |
+| Runtime | JVM version and uptime per pod |
+
+**Reading the key panels**
+
+- **Lowest memory headroom / Memory headroom:** how far each pod's container
+  working set is below its memory limit. Under 10% is OOMKilled risk, even
+  if the heap looks fine; heap max (`-Xmx`) is not the container limit.
+- **Tenured after GC:** old-gen usage right after the last collection, i.e.
+  what survived GC. Flat or falling is healthy. A floor that keeps rising
+  over many hours suggests objects are being retained (a leak candidate). Use
+  a long time range, 12–24 h.
+- **Heap used vs GC frequency:** heap returning to the same baseline while GC
+  rises and falls means load. A rising floor together with climbing GC
+  frequency means a leak or an undersized heap.
+- **Threads started per second:** a high rate with a flat live-thread count
+  is churn: pool threads expiring and being recreated. To find *which* pool,
+  capture a javacore series and compare it (see
+  [GC logs and thread dumps](#gc-logs-and-thread-dumps)).
+- **CPU vs GC overhead:** lines moving together with low GC overhead mean
+  load drives both. Rising GC overhead with CPU means GC is driving the CPU.
+- **Average GC pause:** a 5-minute average, which hides the worst pauses.
+  For real per-pause max and p99, use the GC log tools.
+
+**Requirements**
+- OpenJ9 / IBM Semeru JVMs scraped by the Prometheus **JMX Exporter java
+  agent** (its `java_lang_*`, `jvm_*` and `process_*` metrics).
+- For the memory-limit panels, **cAdvisor** and **kube-state-metrics** in the
+  same Prometheus. Container series are matched to the JVM pods on
+  `namespace`, `pod` and `container`, so other workloads in the namespace
+  never appear.
+
+**Changing it:** edit
+[`dashboards/generate_jvm_troubleshooting.py`](dashboards/generate_jvm_troubleshooting.py),
+not the JSON, then run `python dashboards/generate_jvm_troubleshooting.py`.
+`tests/test_dashboard.py` fails when the committed JSON is out of date. More
+detail is in [`dashboards/README.md`](dashboards/README.md).
 
 ### GC logs and thread dumps
 

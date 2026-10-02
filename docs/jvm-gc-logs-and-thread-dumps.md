@@ -165,6 +165,10 @@ scripts/capture-javacore.sh -n 3 -i 10 si <pod>
 
 > run `jvm_compare_javacores` on `runs/javacores/<pod>-<date>*.txt`
 
+Naming any one file of the series is enough, e.g. just the `…-1.txt` file. The
+tool finds the rest of the series on its own. It also accepts a list, a glob,
+or several paths in one string.
+
 It matches each thread across dumps by its Java thread ID and reports:
 
 | Field | Meaning | What to do |

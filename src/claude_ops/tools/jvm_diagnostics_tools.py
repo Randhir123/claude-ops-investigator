@@ -20,6 +20,7 @@ GC events give true per-collection pause times.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from datetime import datetime
@@ -633,15 +634,70 @@ def _compare_summary(parsed: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def jvm_compare_javacores(paths: list[str]) -> dict[str, Any]:
-    """Compare 2-10 javacores from the same JVM that a human captured into runs/javacores/."""
+# capture-javacore.sh -n N names a series <pod>-<utc>-1.txt ... <pod>-<utc>-N.txt
+_SERIES_NAME_RE = re.compile(r"^(?P<pod>.+?)-(?P<ts>\d{8}T\d{6}Z)-(?P<n>\d+)\.txt$")
+
+
+def _as_path(path: str) -> Path:
+    return Path(path) if Path(path).is_absolute() else PROJECT_ROOT / path
+
+
+def _normalize_paths(paths: list[str] | str | None) -> list[str]:
+    """Accept a list, a single string, or several paths in one string (space/comma separated)."""
+    items = [paths] if isinstance(paths, str) else list(paths or [])
+    return [part for item in items for part in re.split(r"[\s,]+", str(item).strip()) if part]
+
+
+def _series_of(path: str) -> list[str]:
+    """All dumps of the capture series `path` belongs to, oldest first ([] if it isn't part of one)."""
+    target = _as_path(path)
+    match = _SERIES_NAME_RE.match(target.name)
+    if not match or not target.parent.is_dir():
+        return []
+    same_pod = sorted(
+        (m["ts"], int(m["n"]), f)
+        for f in target.parent.iterdir()
+        if (m := _SERIES_NAME_RE.match(f.name)) and m["pod"] == match["pod"]
+    )
+    groups: list[list[Path]] = []
+    previous = None
+    for _, n, f in same_pod:
+        if n == 1 or previous is None or n != previous + 1:
+            groups.append([])
+        groups[-1].append(f)
+        previous = n
+    for group in groups:
+        if any(f.name == target.name for f in group):
+            return [str(f) for f in group]
+    return []
+
+
+def _compare_candidates(paths: list[str]) -> list[str]:
+    """Repo-relative javacores the caller probably meant (same pod if known, else the newest)."""
+    root = JAVACORE_DIR
+    if not root.is_dir():
+        return []
+    pods = {m["pod"] for p in paths if (m := _SERIES_NAME_RE.match(_as_path(p).name))}
+    files = sorted((f for f in root.glob("*.txt") if f.is_file()), key=lambda f: f.name)
+    if pods:
+        files = [f for f in files if (m := _SERIES_NAME_RE.match(f.name)) and m["pod"] in pods] or files
+    return [str(f.relative_to(PROJECT_ROOT)) for f in files[-_MAX_COMPARE_DUMPS:]]
+
+
+def jvm_compare_javacores(paths: list[str] | str) -> dict[str, Any]:
+    """Compare 2-10 javacores from the same JVM that a human captured into runs/javacores/.
+
+    `paths` may be a list, a single string, a glob, or several paths in one
+    string. A single file from a capture series (<pod>-<utc>-<n>.txt) is
+    expanded to the whole series automatically.
+    """
     attempted = {"paths": paths}
     hint = "Run scripts/capture-javacore.sh -n 3 -i 10 <namespace> <pod>; it saves under runs/javacores/."
 
     expanded: list[str] = []
-    for path in paths or []:
+    for path in _normalize_paths(paths):
         if any(ch in path for ch in "*?["):
-            base = Path(path) if Path(path).is_absolute() else PROJECT_ROOT / path
+            base = _as_path(path)
             matches = sorted(str(p) for p in base.parent.glob(base.name))
             if not matches:
                 return ToolError("validation", False, f"No files match {path}.", attempted=attempted,
@@ -649,14 +705,29 @@ def jvm_compare_javacores(paths: list[str]) -> dict[str, Any]:
             expanded.extend(matches)
         else:
             expanded.append(path)
+    expanded = list(dict.fromkeys(str(_as_path(p).resolve()) for p in expanded))  # de-duplicate, keep order
+
+    auto_note = ""
+    if len(expanded) == 1 and len(series := _series_of(expanded[0])) >= 2:
+        auto_note = f"series auto-detected from {Path(expanded[0]).name}"
+        expanded = series
 
     if not 2 <= len(expanded) <= _MAX_COMPARE_DUMPS:
+        candidates = _compare_candidates(expanded)
+        alternatives = []
+        if len(candidates) >= 2:
+            alternatives.append(
+                "Call jvm_compare_javacores again with ALL the files in one list, e.g. paths="
+                + json.dumps(candidates[-3:])
+            )
+        alternatives += [hint, "For a single dump, use jvm_analyze_javacore"]
         return ToolError(
             "validation",
             False,
-            f"Compare needs 2 to {_MAX_COMPARE_DUMPS} javacores; got {len(expanded)}.",
+            f"Compare needs 2 to {_MAX_COMPARE_DUMPS} javacores in `paths`; got {len(expanded)}.",
             attempted=attempted,
-            alternatives=[hint, "For a single dump, use jvm_analyze_javacore"],
+            partialResults={"candidate_files": candidates},
+            alternatives=alternatives,
         ).to_dict()
 
     texts: list[tuple[str, str]] = []
@@ -682,7 +753,7 @@ def jvm_compare_javacores(paths: list[str]) -> dict[str, Any]:
     record = store_raw_evidence(
         content_type="jvm.javacore_comparison",
         raw=parsed,
-        summary=_compare_summary(parsed),
+        summary=(f"({auto_note}) " if auto_note else "") + _compare_summary(parsed),
         metadata={"files": [name for name, _ in texts], "source": "javacore series"},
     )
     return ok(record.to_dict())

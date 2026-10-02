@@ -693,14 +693,18 @@ def jvm_analyze_javacore(path: str) -> str:
 
 
 @mcp.tool()
-def jvm_compare_javacores(paths: list[str]) -> str:
+def jvm_compare_javacores(paths: list[str] | str) -> str:
     """Compare a series of javacores (thread dumps) from one JVM to tell stuck threads from busy ones.
 
     Parameters:
-    - `paths`: 2-10 files under `runs/javacores/` (repo-relative or absolute),
-      or a glob such as `runs/javacores/<pod>-20261001T0130*.txt`. They should
-      come from the same pod, taken seconds apart — e.g. a human ran
-      `scripts/capture-javacore.sh -n 3 -i 10 <namespace> <pod>`.
+    - `paths`: the javacores to compare, under `runs/javacores/` — put ALL of
+      them in this one list, e.g.
+      `["runs/javacores/pod-20261001T002127Z-1.txt", "runs/javacores/pod-20261001T002208Z-2.txt"]`.
+      Also accepted: a glob string such as `"runs/javacores/<pod>-20261001T002*.txt"`,
+      or just ONE file of a series captured with
+      `scripts/capture-javacore.sh -n <count>` (named `<pod>-<utc>-<n>.txt`),
+      which is expanded to the whole series automatically. 2-10 dumps from
+      the same pod, taken seconds apart.
 
     Read-only, local files only. Matches each thread across dumps by Java
     thread ID and reports:

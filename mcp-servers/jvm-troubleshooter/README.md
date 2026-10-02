@@ -116,6 +116,9 @@ when set. See `.env.example`.
 | `get_memory_vs_limit` | Container working set vs memory limit (headroom %, riskiest pods), split into heap, non-heap, direct buffers and native |
 | `get_class_loading_trend` | Loaded classes over time, growth in classes/hour (R²), loaded vs unloaded in the window |
 | `get_jvm_runtime_info` | JVM version/vendor per pod, uptime, start time, mixed versions, newest/oldest pod |
+| `get_incident_window` | Heap %, GC overhead, GCs/min, threads, threads started/s, CPU for an **explicit start/end**: per-pod avg/max and when, service-wide p50/p95/p99, pods that came or went mid-window |
+| `get_baseline_comparison` | The same signals in a baseline window vs a current one, with % change of avg and p95 |
+| `get_cpu_gc_correlation` | Pearson r between process CPU and GC overhead per pod — GC-driven CPU vs load driving both |
 | `get_gc_memory_correlation` | Heap trend + GC frequency trend lined up, for leak-vs-load-spike triage |
 | `get_memory_leak_indicator` | Tenured/old-gen trend fitted with linear regression — slope, R², days-to-full |
 | `get_before_after_deploy_comparison` | Heap/GC/thread averages just before vs. just after a deploy timestamp |
@@ -136,6 +139,14 @@ labels of the JVM series. Missing metrics come back as `null` fields
 (e.g. `cpu_limit_cores` when no CPU limit is set), never as a guessed value.
 `get_jvm_incident_snapshot` includes `get_thread_trend` and
 `get_memory_vs_limit`.
+
+The three time-window tools (`get_incident_window`,
+`get_baseline_comparison`, `get_cpu_gc_correlation`) take times as ISO 8601
+(`2026-10-01T21:17:00Z`; no offset means UTC) or Unix epoch seconds, cap a
+window at 7 days, and pick the query step themselves (60 s or more, about
+400 points per series). Their service-wide statistics pool every sample from
+every pod, so a baseline still compares cleanly across a rollout that
+replaced the pods.
 
 ### Charts
 
